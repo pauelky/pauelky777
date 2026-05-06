@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: savedbot
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health

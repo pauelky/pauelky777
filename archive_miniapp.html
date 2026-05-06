@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Telegram Archive</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/miniapp.css" />
+</head>
+<body data-page-size="{{ARCHIVE_PAGE_SIZE}}" data-theme-mode="auto" data-theme="dark" data-view="dialogs">
+  <div class="app-root">
+    <header class="app-bar">
+      <button id="mobileBackBtn" class="icon-btn mobile-only" type="button" aria-label="Назад">←</button>
+      <div class="app-title-wrap">
+        <strong class="app-title">Telegram Archive</strong>
+        <span id="appSubtitle" class="app-subtitle">Подключаю данные...</span>
+      </div>
+      <div class="app-actions">
+        <button id="themeOpenBtn" class="icon-btn" type="button" aria-label="Тема">◐</button>
+        <button id="refreshAllBtn" class="icon-btn" type="button" aria-label="Обновить">↻</button>
+        <button id="openInfoBtn" class="icon-btn" type="button" aria-label="Детали">i</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="dialogs-pane panel" id="dialogsPane">
+        <div class="dialogs-head">
+          <div class="profile-row">
+            <div class="avatar" id="profileAvatar"><span>SB</span><img alt="avatar" /></div>
+            <div class="profile-copy">
+              <strong id="profileName">Загрузка...</strong>
+              <span id="profileMeta">Ожидаю профиль Mini App</span>
+            </div>
+          </div>
+          <div class="search-wrap">
+            <input id="dialogSearchInput" class="search-input" type="search" placeholder="Поиск чатов" />
+          </div>
+        </div>
+        <div id="dialogList" class="dialog-list">
+          <div class="empty-state">
+            <strong>Список чатов загружается</strong>
+            <p>Покажем последние доступные диалоги и статус синхронизации.</p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="chat-pane panel" id="chatPane">
+        <header class="chat-head">
+          <div class="chat-main">
+            <div id="chatAvatar" class="avatar chat-avatar"><span>CH</span><img alt="chat avatar" /></div>
+            <div class="chat-copy">
+              <strong id="chatTitle">Выберите чат</strong>
+              <span id="chatMeta">Здесь будет лента сообщений.</span>
+            </div>
+          </div>
+          <div class="chat-actions">
+            <button id="chatRefreshBtn" class="text-btn" type="button">Обновить</button>
+            <button id="chatInfoBtn" class="text-btn" type="button">Детали</button>
+          </div>
+        </header>
+
+        <div id="syncStrip" class="sync-strip">Подключаю историю…</div>
+
+        <div class="message-filters" id="messageFilters">
+          <button class="chip is-active" type="button" data-filter="all">Все</button>
+          <button class="chip" type="button" data-filter="deleted">Удалённые</button>
+          <button class="chip" type="button" data-filter="edited">Изменённые</button>
+        </div>
+
+        <div id="timeline" class="timeline">
+          <div class="empty-state">
+            <strong>Пока нет сообщений</strong>
+            <p>Откройте диалог слева, чтобы показать сохранённую историю.</p>
+          </div>
+        </div>
+
+        <footer class="timeline-footer">
+          <button id="loadOlderBtn" class="text-btn" type="button">Загрузить старые сообщения</button>
+        </footer>
+      </section>
+    </main>
+
+    <aside class="info-panel" id="infoPanel" aria-hidden="true">
+      <header class="info-head">
+        <strong>Детали чата</strong>
+        <button id="closeInfoBtn" class="icon-btn" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <section class="info-section">
+        <h3>Синхронизация</h3>
+        <div id="infoSyncState" class="info-row">Ожидаю данные…</div>
+      </section>
+      <section class="info-section">
+        <h3>Архив</h3>
+        <div id="infoCounters" class="counter-grid"></div>
+      </section>
+      <section class="info-section">
+        <h3>Медиа в текущей выборке</h3>
+        <div id="infoMediaList" class="compact-list"></div>
+      </section>
+      <section class="info-section">
+        <h3>История изменений</h3>
+        <div id="infoHistoryList" class="compact-list"></div>
+      </section>
+      <button id="logoutBtn" class="danger-btn" type="button">Завершить сессию</button>
+    </aside>
+
+    <div id="panelBackdrop" class="backdrop" hidden></div>
+
+    <div id="themeSheet" class="theme-sheet" hidden>
+      <div class="sheet-head">
+        <strong>Тема</strong>
+        <button id="themeCloseBtn" class="icon-btn" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="theme-options">
+        <button class="theme-option" type="button" data-theme-mode="auto">Auto</button>
+        <button class="theme-option" type="button" data-theme-mode="light">Light</button>
+        <button class="theme-option" type="button" data-theme-mode="dark">Dark</button>
+      </div>
+    </div>
+
+    <div id="historyModal" class="history-modal" hidden>
+      <div class="history-dialog">
+        <header class="history-head">
+          <strong id="historyTitle">История сообщения</strong>
+          <button id="historyCloseBtn" class="icon-btn" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div id="historyBody" class="history-body"></div>
+      </div>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
+  </div>
+
+  <script src="/miniapp.js"></script>
+</body>
+</html>
