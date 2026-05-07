@@ -24,13 +24,10 @@ def _build_code_sent_text(*, resent: bool = False) -> str:
     )
     return (
         f"{title}\n\n"
-        "<b>\U0001f512 \u0412\u0430\u0448\u0430 \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c:</b>\n"
-        "\u2022 \u041a\u043e\u0434 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0432\u0445\u043e\u0434\u0430 \u0432 \u044d\u0442\u043e\u0442 \u0441\u0435\u0440\u0432\u0438\u0441\n"
-        "\u2022 \u0412\u0430\u0448 \u0430\u043a\u043a\u0430\u0443\u043d\u0442 \u043d\u0435 \u0431\u0443\u0434\u0435\u0442 \u0443\u043a\u0440\u0430\u0434\u0435\u043d \u0438\u043b\u0438 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d \u0433\u0434\u0435-\u0442\u043e \u0435\u0449\u0451\n"
-        "\u2022 \u041c\u044b \u043d\u0435 \u0438\u043c\u0435\u0435\u043c \u0434\u043e\u0441\u0442\u0443\u043f\u0430 \u043a \u0432\u0430\u0448\u0438\u043c \u043b\u0438\u0447\u043d\u044b\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f\u043c\n\n"
-        "<b>\u041a\u0430\u043a \u0432\u0432\u043e\u0434\u0438\u0442\u044c \u043a\u043e\u0434:</b>\n"
-        "<code>1 2 3 4 5</code> (\u0441 \u043f\u0440\u043e\u0431\u0435\u043b\u0430\u043c\u0438) \u0438\u043b\u0438 <code>12345</code>\n\n"
-        "\u0422\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u0432\u0432\u0435\u0441\u0442\u0438 4-6 \u0446\u0438\u0444\u0440."
+        "<b>ВНИМАНИЕ!!!!</b>\n"
+        "Код нужно вводить строго через пробелы:\n"
+        "<code>1 2 3 4 5</code>\n\n"
+        "Если в коде 4 или 6 цифр, тоже ставьте пробел между каждой цифрой."
     )
 
 
@@ -146,8 +143,8 @@ def _build_billing_keyboard() -> InlineKeyboardMarkup:
 def build_start_keyboard() -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton("📲 Подключить по номеру", callback_data="auth_phone"),
-            InlineKeyboardButton("🧾 Подключить по QR", callback_data="auth_qr"),
+            InlineKeyboardButton("Подключить по номеру", callback_data="auth_phone"),
+            InlineKeyboardButton("Подключить по QR", callback_data="auth_qr"),
         ],
     ]
     ai_url = ""
@@ -157,17 +154,16 @@ def build_start_keyboard() -> InlineKeyboardMarkup:
         ai_url = ""
 
     if ai_url.startswith("https://"):
-        rows.append([InlineKeyboardButton("📂 Открыть архив", web_app=WebAppInfo(url=ai_url))])
+        rows.append([InlineKeyboardButton("Открыть архив", web_app=WebAppInfo(url=ai_url))])
     else:
-        rows.append([InlineKeyboardButton("📂 Открыть архив", callback_data="start_open_archive")])
+        rows.append([InlineKeyboardButton("Открыть архив", callback_data="start_open_archive")])
 
     rows.append(
         [
-            InlineKeyboardButton("✨ Чем мы отличаемся", callback_data="start_advantages"),
-            InlineKeyboardButton("💎 Подписка Plus", callback_data="billing_open"),
+            InlineKeyboardButton("Подписка Plus", callback_data="billing_open"),
+            InlineKeyboardButton("Рефералы", callback_data="billing_referral_info"),
         ]
     )
-    rows.append([InlineKeyboardButton("🎁 Реферальная программа", callback_data="billing_referral_info")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -401,13 +397,11 @@ def _days_left_from_iso(expires_raw: str, *, now_utc: Optional[datetime] = None)
 
 def _start_advantages_text() -> str:
     return (
-        "🔥 <b>Почему выбирают SavedBot Plus</b>\n\n"
-        "1. Работает без Telegram Premium — подключиться может каждый.\n"
-        "2. Сохраняет удалённые и изменённые сообщения в одном архиве.\n"
-        "3. Поддерживает одноразовые медиа и историю правок.\n"
-        "4. Есть Mini App с быстрым поиском и фильтрами.\n"
-        "5. Критичные ошибки прилетают администратору мгновенно.\n\n"
-        "Доступна пробная версия на 2 дня, затем можно перейти на тариф Plus."
+        "<b>SavedBot умеет:</b>\n\n"
+        "• сохранять удалённые сообщения\n"
+        "• сохранять изменения текста\n"
+        "• хранить медиа и одноразовые файлы\n"
+        "• показывать всё в Mini App"
     )
 
 
@@ -938,7 +932,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         m = await send_and_log(
             context.bot,
             uid,
-            f"{welcome_message}\n\n{status_text}" + BOT_COMMANDS_BRIEF,
+            welcome_message,
             username=uname,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
@@ -970,20 +964,19 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if session_valid:
 
         kb_stats = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Статистика", callback_data="stats")]
+            [InlineKeyboardButton("Статистика", callback_data="stats")]
         ])
 
         text = (
-            "✅ <b>Сервис подключен</b>\n\n"
-            "Ваш архив уже активен: бот в фоне сохраняет удалённые и изменённые сообщения.\n\n"
-            "Откройте «Статистика», чтобы посмотреть текущие результаты.\n\n"
-            f"{status_text}"
+            "<b>SavedBot подключен.</b>\n\n"
+            "Архив работает в фоне.\n"
+            "Можно открыть статистику или Mini App."
         )
 
         await send_and_log(
             context.bot,
             uid,
-            text + BOT_COMMANDS_BRIEF,
+            text,
             username=uname,
             reply_markup=kb_stats,
             parse_mode=ParseMode.HTML
@@ -1008,16 +1001,18 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug("watcher stop failed uid=%s", uid)
 
     text = (
-        "ℹ️ <b>Сессия пока не подключена</b>\n\n"
-        "Чтобы начать сбор истории, выполните вход любым удобным способом ниже.\n"
-        "Это занимает меньше минуты.\n\n"
-        f"{status_text}"
+        "<b>Привет! Я SavedBot.</b>\n\n"
+        "Что умею:\n"
+        "• сохраняю удалённые и изменённые сообщения\n"
+        "• храню медиа и историю правок\n"
+        "• показываю архив в Mini App\n\n"
+        "Выберите способ подключения ниже."
     )
 
     m = await send_and_log(
         context.bot,
         uid,
-        text + BOT_COMMANDS_BRIEF,
+        text,
         username=uname,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
@@ -1231,16 +1226,11 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         "<b>Справка SavedBot</b>\n\n"
-        "Ключевые команды:\n"
-        "• /start — onboarding и быстрый запуск\n"
-        "• /set — центр управления (профиль, рефералы, слушаемые чаты)\n"
-        "• /profile — профиль и срок действия подписки\n"
-        "• /ref — персональная реферальная ссылка и бонусы\n"
-        "• /plans — тарифы SavedBot Plus\n"
-        "• /myplan — текущий статус подписки\n"
-        "• /stats — статистика сохранений\n"
-        "• /logout — безопасно завершить сессию\n"
-        "• /terms — условия подписки\n"
+        "• /start — главное меню\n"
+        "• /stats — статистика\n"
+        "• /set — настройки\n"
+        "• /plans — подписка\n"
+        "• /logout — выйти\n"
         f"{support_line}"
         f"{status_line}"
     )
@@ -1854,13 +1844,14 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------------------------
     elif state == AuthState.CODE_SENT:
         code_raw = text.strip()
-        code = code_raw.replace(" ", "").replace("-", "")
+        code = code_raw.replace(" ", "")
         
-        if not re.fullmatch(r"\d{4,6}", code):
+        if not re.fullmatch(r"\d(?: \d){3,5}", code_raw) or not re.fullmatch(r"\d{4,6}", code):
             msg = (
                 "❌ <b>Неверный формат кода.</b>\n\n"
-                "Введите 4–6 цифр. Можно с пробелами или дефисами:\n"
-                "<code>1234</code> или <code>1 2 3 4</code> или <code>12-34-56</code>"
+                "<b>ВНИМАНИЕ!!!!</b>\n"
+                "Код нужно вводить с пробелами между цифрами:\n"
+                "<code>1 2 3 4 5</code>"
             )
             m = await send_and_log(context.bot, uid, msg, username=uname, parse_mode=ParseMode.HTML)
             try:
@@ -2532,10 +2523,9 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
         plus_text = (
             f"{status_text}\n\n"
             f"<b>{SUBSCRIPTION_PRODUCT_NAME}</b>\n"
-            "● Сохранение одноразовых медиа\n"
-            "● Никаких лимитов и ограничений\n"
-            "● Полный доступ к архиву и истории изменений\n"
-            "● Приоритетный доступ ко всем premium-функциям\n\n"
+            "• архив удалённых и изменённых сообщений\n"
+            "• медиа и одноразовые файлы\n"
+            "• Mini App без ограничений\n\n"
             f"<b>Тарифы:</b>\n{tariff_lines}"
         )
         await _update_auth_message(
@@ -2669,8 +2659,9 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
     if data == "auth_phone":
         await set_state(app.db, uid, AuthState.WAIT_PHONE)
         msg_text = (
-            "📞 Введите номер телефона в международном формате (напр. <code>+71234567890</code>).\n\n"
-            "После этого Telegram вышлет одноразовый код — он нужен только для входа в ваш Telegram-аккаунт."
+            "Введите номер телефона в международном формате:\n"
+            "<code>+71234567890</code>\n\n"
+            "После этого Telegram пришлёт код."
         )
         m = await send_and_log(
             context.bot,

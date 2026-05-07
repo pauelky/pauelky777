@@ -1,7 +1,10 @@
 (() => {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const PAGE = Number(document.body.dataset.pageSize || "40") || 40;
+  const HISTORY_PAGE = Math.max(PAGE, 120);
   const POLL_MS = 8000;
+  const AUTO_HISTORY_PAUSE_MS = 120;
+  const AUTO_HISTORY_MAX_PAGES = 120;
   const CACHE_KEY = "savedbot-miniapp-cache-v2";
   const THEME_KEY = "savedbot-miniapp-theme-mode";
 
@@ -38,6 +41,8 @@
     lockedByError: false,
     messagesRequestId: 0,
     messagesAbortController: null,
+    autoHistoryLoading: false,
+    autoHistoryChatId: null,
   };
 
   const el = {
@@ -99,7 +104,7 @@
   }
 
   function messageKey(msg) {
-    if (msg && msg.msg_id != null) return `m:${msg.msg_id}`;
+    if (msg && msg.chat_id != null && msg.msg_id != null) return `m:${msg.chat_id}:${msg.msg_id}`;
     if (msg && msg.item_id != null) return `i:${msg.item_id}`;
     const createdAt = msg && msg.created_at ? String(msg.created_at) : "";
     const sender = msg && msg.sender_label ? String(msg.sender_label) : "";
@@ -147,12 +152,36 @@
     return date.toISOString().slice(0, 10);
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function messageBounds(messages) {
+    const ids = filterMessagesByChat(messages, state.currentChatId)
+      .map((msg) => toPositiveInt(msg && msg.msg_id))
+      .filter(Boolean);
+    if (!ids.length) return { oldest: null, newest: null };
+    return {
+      oldest: Math.min(...ids),
+      newest: Math.max(...ids),
+    };
+  }
+
+  function updateLoadOlderButton() {
+    if (!el.loadOlderBtn) return;
+    const showFallback = Boolean(state.currentChatId && state.hasMore && !state.autoHistoryLoading);
+    el.loadOlderBtn.hidden = !showFallback;
+    el.loadOlderBtn.textContent = (state.loadingOlder || state.autoHistoryLoading)
+      ? "Загружаю историю..."
+      : "Загрузить старые сообщения";
+  }
+
   function resolveSyncStatusLine() {
-    if (!state.currentChatMeta) return "Выберите чат для просмотра архива.";
-    if (!state.sessionActive) return "Сессия неактивна. Показываем последнее сохранённое состояние.";
-    if (!state.watcherActive) return "Загружены последние сообщения. Синхронизация на паузе.";
-    if (state.currentChatMeta.history_complete) return "Синхронизация завершена. Архив готов, новые события поступают в фоне.";
-    return "Подключаю историю… Загружены последние сообщения. Догружаю старые сообщения.";
+    if (!state.currentChatMeta) return "Выберите чат.";
+    if (!state.sessionActive) return "Сессия неактивна.";
+    if (!state.watcherActive) return "Синхронизация на паузе.";
+    if (state.currentChatMeta.history_complete) return "Архив готов.";
+    return state.autoHistoryLoading ? "Загружаю историю..." : "Архив загружен.";
   }
 
   function syncBadgeText(syncStatus) {
@@ -285,6 +314,9 @@
     state.oldestMsgId = null;
     state.newestMsgId = null;
     state.hasMore = false;
+    state.autoHistoryLoading = false;
+    state.autoHistoryChatId = null;
+    updateLoadOlderButton();
   }
 
   function clearCurrentChatSelection() {
@@ -611,7 +643,18 @@
       </div>`
       : "";
 
-    const text = esc(msg.text || msg.original_text || "");
+    const rawText = String(msg.text || msg.original_text || "").trim();
+    const text = esc(rawText);
+    const contentType = String(msg.content_type || "").toLowerCase();
+    const mediaLabel = msg.has_media
+      ? (contentType.includes("photo") ? "Фото"
+        : contentType.includes("video") ? "Видео"
+        : contentType.includes("voice") || contentType.includes("audio") ? "Аудио"
+        : "Файл")
+      : "Сообщение";
+    const textBlock = text
+      ? `<div class="bubble-text">${text}</div>`
+      : `<div class="bubble-text muted">${esc(mediaLabel)}</div>`;
     const mediaPlaceholder = msg.has_preview
       ? `<div class="media-preview js-media-preview" data-item-id="${toInt(msg.item_id)}" data-mime=""><span>Медиа появится при прокрутке</span></div>`
       : "";
@@ -621,7 +664,7 @@
       <article class="${rowClass}">
         <div class="${bubbleClass}">
           ${replyPreview}
-          <div class="bubble-text">${text || "—"}</div>
+          ${textBlock}
           ${mediaPlaceholder}
           <div class="bubble-meta">
             <span>${esc(timeText)}</span>
@@ -936,7 +979,7 @@
       if (state.loadingOlder) return;
       if (state.currentChatId !== numericChatId) return;
       state.loadingOlder = true;
-      if (el.loadOlderBtn) el.loadOlderBtn.textContent = "Загрузка...";
+      updateLoadOlderButton();
     } else {
       if (state.loadingMessages && state.currentChatId === numericChatId) return;
       state.loadingMessages = true;
@@ -959,10 +1002,10 @@
       }
     }
 
-    const requestId = ++state.messagesRequestId;
+    const requestId = isOlderChunk ? state.messagesRequestId : ++state.messagesRequestId;
     const activeController = !isOlderChunk ? state.messagesAbortController : null;
     try {
-      const payload = { chat_id: numericChatId, limit: PAGE };
+      const payload = { chat_id: numericChatId, limit: isOlderChunk ? HISTORY_PAGE : PAGE };
       if (beforeMsgId) payload.before_msg_id = toInt(beforeMsgId);
       const data = await api(
         "/ai/chat/messages",
@@ -987,9 +1030,11 @@
       };
       state.sessionActive = Boolean(data.session_active);
       state.watcherActive = Boolean(data.watcher_active);
-      state.oldestMsgId = data.oldest_loaded_msg_id != null ? toInt(data.oldest_loaded_msg_id) : null;
-      state.newestMsgId = data.newest_loaded_msg_id != null ? toInt(data.newest_loaded_msg_id) : null;
+      const bounds = messageBounds(state.messages);
+      state.oldestMsgId = bounds.oldest || (data.oldest_loaded_msg_id != null ? toInt(data.oldest_loaded_msg_id) : null);
+      state.newestMsgId = bounds.newest || (data.newest_loaded_msg_id != null ? toInt(data.newest_loaded_msg_id) : null);
       state.hasMore = Boolean(data.has_more);
+      updateLoadOlderButton();
 
       renderDialogs();
       renderChatHeader();
@@ -1000,6 +1045,9 @@
         setView("chat");
       }
       saveCache();
+      if (!isOlderChunk) {
+        startBackgroundHistoryLoad(numericChatId);
+      }
     } catch (err) {
       if (err && err.name === "AbortError") return;
       if (err && (err.status === 401 || err.status === 402)) {
@@ -1013,11 +1061,40 @@
       }
       if (isOlderChunk) {
         state.loadingOlder = false;
-        if (el.loadOlderBtn) {
-          el.loadOlderBtn.textContent = state.hasMore ? "Загрузить старые сообщения" : "Старых сообщений больше нет";
-        }
+        updateLoadOlderButton();
       } else {
         state.loadingMessages = false;
+      }
+    }
+  }
+
+  async function startBackgroundHistoryLoad(chatId) {
+    const numericChatId = toInt(chatId);
+    if (!numericChatId || state.lockedByError) return;
+    if (state.autoHistoryLoading && state.autoHistoryChatId === numericChatId) return;
+    state.autoHistoryChatId = numericChatId;
+    state.autoHistoryLoading = true;
+    updateLoadOlderButton();
+    let pages = 0;
+    try {
+      while (
+        state.currentChatId === numericChatId &&
+        state.hasMore &&
+        state.oldestMsgId &&
+        !state.lockedByError &&
+        pages < AUTO_HISTORY_MAX_PAGES
+      ) {
+        const before = state.oldestMsgId;
+        await fetchMessages(numericChatId, { beforeMsgId: before, silent: true });
+        pages += 1;
+        if (state.currentChatId !== numericChatId || state.oldestMsgId === before) break;
+        await sleep(AUTO_HISTORY_PAUSE_MS);
+      }
+    } finally {
+      if (state.autoHistoryChatId === numericChatId) {
+        state.autoHistoryLoading = false;
+        state.autoHistoryChatId = null;
+        updateLoadOlderButton();
       }
     }
   }
@@ -1029,6 +1106,7 @@
       if (window.matchMedia && window.matchMedia("(max-width: 900px)").matches) {
         setView("chat");
       }
+      startBackgroundHistoryLoad(numericChatId);
       return;
     }
     await fetchMessages(numericChatId);

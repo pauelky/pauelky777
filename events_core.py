@@ -1677,20 +1677,30 @@ class EventHandler:
                 )
                 return True
 
-        await self.db.execute(
-            """
-            UPDATE chat_thread_messages
-            SET status='deleted', deleted_at=?, updated_at=?
-            WHERE owner_id=? AND msg_id=?
-            """,
-            (deleted_at, deleted_at, owner_id, msg_id),
-        )
-        row = await self.db.fetchone(
-            "SELECT chat_id, sender_id FROM chat_thread_messages WHERE owner_id=? AND msg_id=? ORDER BY id DESC LIMIT 1",
+        rows = await self.db.fetchall(
+            "SELECT chat_id, sender_id FROM chat_thread_messages WHERE owner_id=? AND msg_id=? ORDER BY id DESC",
             (owner_id, msg_id),
         )
-        if row:
-            thread_chat_id = row[0]
+        if rows:
+            chat_ids = {int(row[0]) for row in rows if row[0] is not None}
+            if len(chat_ids) != 1:
+                logger.warning(
+                    "Skip delete fallback without chat_id: owner=%s msg_id=%s matched_chats=%s",
+                    owner_id,
+                    msg_id,
+                    sorted(chat_ids),
+                )
+                return False
+            thread_chat_id = next(iter(chat_ids))
+            sender_id = rows[0][1] if len(rows[0]) > 1 else None
+            await self.db.execute(
+                """
+                UPDATE chat_thread_messages
+                SET status='deleted', deleted_at=?, updated_at=?
+                WHERE owner_id=? AND msg_id=? AND chat_id=?
+                """,
+                (deleted_at, deleted_at, owner_id, msg_id, thread_chat_id),
+            )
             await self._add_thread_revision(
                 owner_id=owner_id,
                 chat_id=thread_chat_id,
@@ -1703,7 +1713,7 @@ class EventHandler:
             await self._record_risk_event(
                 owner_id=owner_id,
                 chat_id=thread_chat_id,
-                sender_id=row[1] if len(row) > 1 else None,
+                sender_id=sender_id,
                 msg_id=msg_id,
                 signal_type="message_delete",
                 event_at=deleted_at,
@@ -2312,17 +2322,42 @@ class EventHandler:
             try:
                 # === STEP 1: Найти запись в pending ===
                 row = None
+                pending_lookup_ambiguous = False
                 for attempt in range(1, 26):
                     try:
-                        row = await self.db.fetchone("""
+                        base_query = """
                             SELECT id, chat_title, text, original_text, edit_count, last_edited_at,
                                    media_path, sender_id, sender_username, message_date, chat_id,
                                    chat_username, COALESCE(already_forwarded, 0),
                                    COALESCE(views, 0), COALESCE(reactions, '{}'),
                                    COALESCE(is_disappearing, 0), COALESCE(content_type, '')
                             FROM pending WHERE owner_id = ? AND msg_id = ?
-                        """, (owner_id, msg_id))
+                        """
+                        if final_chat_id is not None:
+                            row = await self.db.fetchone(
+                                base_query + " AND chat_id = ? ORDER BY id DESC LIMIT 1",
+                                (owner_id, msg_id, final_chat_id),
+                            )
+                        else:
+                            pending_rows = await self.db.fetchall(
+                                base_query + " ORDER BY id DESC",
+                                (owner_id, msg_id),
+                            )
+                            chat_ids = {int(candidate[10]) for candidate in pending_rows if candidate[10] is not None}
+                            if len(pending_rows) == 1 or len(chat_ids) == 1:
+                                row = pending_rows[0] if pending_rows else None
+                            elif pending_rows:
+                                logger.warning(
+                                    "Skip pending delete without chat_id: owner=%s msg_id=%s matched_chats=%s",
+                                    owner_id,
+                                    msg_id,
+                                    sorted(chat_ids),
+                                )
+                                pending_lookup_ambiguous = True
+                                row = None
                         if row:
+                            break
+                        if pending_lookup_ambiguous:
                             break
                     except Exception as e:
                         logger.debug("Attempt %d to fetch pending row failed: %s", attempt, e)
@@ -2330,6 +2365,9 @@ class EventHandler:
                         await asyncio.sleep(0.07)
 
                 if not row:
+                    if pending_lookup_ambiguous:
+                        skipped_ids.append(msg_id)
+                        continue
                     logger.debug("Message %d not found in pending for owner %s (normal for external deletes)",
                                 msg_id, owner_id)
                     fallback_marked = await self._mark_thread_deleted_fallback(
@@ -2359,11 +2397,15 @@ class EventHandler:
                 row_reactions = row_reactions or '{}'                
                 # РСЃРїРѕР»СЊР·СѓРµРј chat_id РёР· Р±Р°Р·С‹ (РЅР°РёР±РѕР»РµРµ РЅР°РґС‘Р¶РЅС‹Р№ РёСЃС‚РѕС‡РЅРёРє РґР»СЏ СЌС‚РѕРіРѕ СЃРѕРѕР±С‰РµРЅРёСЏ)
                 final_msg_chat_id = db_chat_id or final_chat_id or event_chat_id
+                if final_msg_chat_id is None:
+                    logger.warning("Skip delete without resolved chat_id: owner=%s msg_id=%s", owner_id, msg_id)
+                    skipped_ids.append(msg_id)
+                    continue
 
                 # === STEP 2: Проверить дедупликацию ===
                 existing = await self.db.fetchone(
-                    "SELECT id FROM deleted_messages WHERE owner_id=? AND msg_id=?",
-                    (owner_id, msg_id)
+                    "SELECT id FROM deleted_messages WHERE owner_id=? AND chat_id=? AND msg_id=?",
+                    (owner_id, final_msg_chat_id, msg_id)
                 )
                 if existing:
                     logger.debug("Message %d already in deleted_messages for owner %s, cleaning up pending",
