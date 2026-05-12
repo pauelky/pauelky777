@@ -531,15 +531,16 @@ OPENROUTER_DIRECT_URL = _env_str("OPENROUTER_URL", "https://openrouter.ai/api/v1
 OPENROUTER_PROXY_URL = _env_str("OPENROUTER_PROXY_URL", "")
 OPENROUTER_PROXY_TOKEN = _env_str("OPENROUTER_PROXY_TOKEN", "")
 OPENROUTER_URL = OPENROUTER_PROXY_URL or OPENROUTER_DIRECT_URL
-OPENROUTER_MODEL = _env_str("OPENROUTER_MODEL", "minimax/minimax-m2.5:free")
+DEFAULT_MAINBOT_MODEL = "inclusionai/ring-2.6-1t:free"
+OPENROUTER_MODEL = _env_str("OPENROUTER_MODEL", DEFAULT_MAINBOT_MODEL)
 # Модель с поддержкой зрения для анализа фото (если не задана — используется OPENROUTER_MODEL)
-OPENROUTER_VISION_MODEL = _env_str("OPENROUTER_VISION_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
+OPENROUTER_VISION_MODEL = _env_str("OPENROUTER_VISION_MODEL", DEFAULT_MAINBOT_MODEL)
 _MODEL_FAST_TEXT_EXPLICIT = bool(_env_str("MODEL_FAST_TEXT", ""))
 MODEL_FAST_TEXT = _env_str("MODEL_FAST_TEXT", OPENROUTER_MODEL)
 MODEL_STRONG_TEXT = _env_str("MODEL_STRONG_TEXT", OPENROUTER_MODEL)
 MODEL_VISION = _env_str("MODEL_VISION", OPENROUTER_VISION_MODEL or OPENROUTER_MODEL)
 MODEL_MATH = _env_str("MODEL_MATH", MODEL_STRONG_TEXT)
-MODEL_BACKUP_TEXT = _env_str("MODEL_BACKUP_TEXT", "minimax/minimax-m2.5:free")
+MODEL_BACKUP_TEXT = _env_str("MODEL_BACKUP_TEXT", DEFAULT_MAINBOT_MODEL)
 OPENROUTER_VISION_MODEL = MODEL_VISION
 OPENROUTER_PROXY_MONITOR_INTERVAL = float(os.getenv("OPENROUTER_PROXY_MONITOR_INTERVAL", "20") or "20")
 OPENWEATHER_API_KEY = _env_str("OPENWEATHER_API_KEY", "")
@@ -635,14 +636,13 @@ ADMIN_MODEL_CALLBACK_PREFIX = "admin_model|strong|"
 def get_admin_model_presets() -> list[str]:
     presets: list[str] = []
     for candidate in (
+        DEFAULT_MAINBOT_MODEL,
         MODEL_STRONG_TEXT,
         OPENROUTER_MODEL,
-        "google/gemma-3n-e4b-it:free",
-        "google/gemma-3n-e2b-it:free",
-        "google/gemma-3-12b-it:free",
-        "openai/gpt-oss-120b:free",
-        "openai/gpt-oss-20b:free",
-        "arcee-ai/trinity-large-preview:free",
+        MODEL_FAST_TEXT,
+        MODEL_MATH,
+        MODEL_BACKUP_TEXT,
+        MODEL_VISION,
     ):
         normalized = (candidate or "").strip()
         if not normalized or normalized in presets:
@@ -1126,7 +1126,7 @@ def fallback_model_for_unavailable(preferred_model: str | None) -> str | None:
         (MODEL_BACKUP_TEXT or "").strip(),
         (MODEL_STRONG_TEXT or "").strip(),
         (OPENROUTER_MODEL or "").strip(),
-        "openai/gpt-oss-120b:free",
+        DEFAULT_MAINBOT_MODEL,
     ]
     for candidate in candidates:
         if not candidate:
@@ -1148,7 +1148,7 @@ def fallback_model_for_runtime_issue(preferred_model: str | None, task_type: str
         candidates.extend([
             fast_candidate,
             backup_candidate,
-            "openai/gpt-oss-120b:free",
+            DEFAULT_MAINBOT_MODEL,
             (MODEL_STRONG_TEXT or "").strip(),
             (OPENROUTER_MODEL or "").strip(),
             fast_candidate,
@@ -1157,7 +1157,7 @@ def fallback_model_for_runtime_issue(preferred_model: str | None, task_type: str
         candidates.extend([
             backup_candidate,
             (MODEL_STRONG_TEXT or "").strip(),
-            "openai/gpt-oss-120b:free",
+            DEFAULT_MAINBOT_MODEL,
             (OPENROUTER_MODEL or "").strip(),
             fast_candidate,
         ])
@@ -3921,7 +3921,7 @@ ProgressManager = globals().get("ProgressManager", None)
 # ----------------------- Configuration defaults & globals -----------------------
 OPENROUTER_URL = globals().get("OPENROUTER_URL", "https://api.openrouter.ai/v1/chat/completions")
 OPENROUTER_API_KEY = globals().get("OPENROUTER_API_KEY", globals().get("OPENROUTER_KEY", ""))
-OPENROUTER_MODEL = globals().get("OPENROUTER_MODEL", "arcee-ai/trinity-large-preview:free")
+OPENROUTER_MODEL = globals().get("OPENROUTER_MODEL", DEFAULT_MAINBOT_MODEL)
 OPENROUTER_MAX_CONCURRENT = int(globals().get("OPENROUTER_MAX_CONCURRENT", 3))  # Увеличено с 1 до 15 для одновременной обработки
 OPENROUTER_SEMAPHORE = globals().get("OPENROUTER_SEMAPHORE", asyncio.Semaphore(OPENROUTER_MAX_CONCURRENT))
 
@@ -6991,7 +6991,7 @@ _VISION_UNAVAILABLE_UNTIL = 0.0
 
 # OPENROUTER_API_KEY и OPENROUTER_MODEL предполагаются уже определёнными в проекте/окружении.
 OPENROUTER_API_KEY = globals().get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = globals().get("OPENROUTER_MODEL") or os.getenv("OPENROUTER_MODEL")
+OPENROUTER_MODEL = globals().get("OPENROUTER_MODEL") or os.getenv("OPENROUTER_MODEL") or DEFAULT_MAINBOT_MODEL
 OPENROUTER_VISION_MODEL = (
     globals().get("OPENROUTER_VISION_MODEL")
     or os.getenv("OPENROUTER_VISION_MODEL")
