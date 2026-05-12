@@ -567,7 +567,10 @@ STREAM_CHUNK_SIZE = int(os.getenv("STREAM_CHUNK_SIZE", "45"))  # Меньше с
 STREAM_MIN_UPDATE_INTERVAL = float(os.getenv("STREAM_MIN_UPDATE_INTERVAL", "0.9"))  # Мин. интервал между редактированиями (защита от rate limit)
 STREAM_EDIT_MIN_INTERVAL = float(os.getenv("STREAM_EDIT_MIN_INTERVAL", "0.6"))
 STREAM_EDIT_MIN_DELTA_CHARS = int(os.getenv("STREAM_EDIT_MIN_DELTA_CHARS", "40"))
-STREAM_MAX_TEXT_LEN = int(os.getenv("STREAM_MAX_TEXT_LEN", "900"))
+STREAM_MIN_TEXT_LEN = int(os.getenv("STREAM_MIN_TEXT_LEN", "80"))
+STREAM_MAX_TEXT_LEN = int(os.getenv("STREAM_MAX_TEXT_LEN", "2200"))
+STREAM_HTML_ANSWERS = os.getenv("STREAM_HTML_ANSWERS", "true").lower() == "true"
+STREAM_COMPACT_ANSWERS = os.getenv("STREAM_COMPACT_ANSWERS", "true").lower() == "true"
 TYPING_HEARTBEAT_INTERVAL = float(os.getenv("TYPING_HEARTBEAT_INTERVAL", "4.2"))
 STATUS_MESSAGE_DELETE_DELAY = float(os.getenv("STATUS_MESSAGE_DELETE_DELAY", "0.7"))
 OPENROUTER_HISTORY_LIMIT = int(os.getenv("OPENROUTER_HISTORY_LIMIT", "16"))
@@ -2789,26 +2792,28 @@ def prepare_assistant_display(question: str, answer_text: str) -> tuple[str, str
 def should_stream_answer(question: str, answer_text: str, parse_mode: str | None = None) -> bool:
     if not ENABLE_STREAMING:
         return False
-    if _is_html_parse_mode(parse_mode):
+    if _is_html_parse_mode(parse_mode) and not STREAM_HTML_ANSWERS:
         return False
 
     text = clean_reply_for_display(answer_text)
-    if not text or should_send_plain_copyable_answer(question, text) or should_send_compact_answer(question, text):
+    if not text or should_send_plain_copyable_answer(question, text):
+        return False
+    if should_send_compact_answer(question, text) and not STREAM_COMPACT_ANSWERS:
         return False
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(text) < 260 or len(text) > 1800:
+    if len(text) < STREAM_MIN_TEXT_LEN or len(text) > STREAM_MAX_TEXT_LEN:
         return False
-    if len(lines) > 14:
+    if len(lines) > 24:
         return False
     if "```" in answer_text:
         return False
-    if re.search(r"(^|\n)\s*[-•*]\s+", text) and len(lines) >= 6:
+    if re.search(r"(^|\n)\s*[-•*]\s+", text) and len(lines) >= 12:
         return False
 
     sentence_count = len(re.findall(r"[.!?…](?:\s|$)", text))
     paragraph_count = len([part for part in re.split(r"\n{2,}", text) if part.strip()])
-    return sentence_count >= 3 or paragraph_count >= 2
+    return sentence_count >= 1 or paragraph_count >= 1
 
 async def _reset_user_dialog_context(user_id: int, chat_id: int | None = None) -> None:
     target_chat_id = int(chat_id or 0)
@@ -5172,7 +5177,7 @@ async def send_answer_with_actions(
         display_text,
         reply_markup=None if compact_answer else get_answer_actions_keyboard(),
         parse_mode=effective_parse_mode,
-        use_streaming=False if compact_answer else use_streaming,
+        use_streaming=use_streaming,
         reply_to_message_id=reply_to_message_id,
     )
     if not compact_answer:
