@@ -1,4 +1,5 @@
 from .shared import *
+import difflib
 import sqlite3
 from PIL import Image, ImageOps, ImageDraw, ImageFont, ImageStat
 
@@ -17,6 +18,66 @@ def _is_minor_edit(original_text: Optional[str], new_text: Optional[str]) -> boo
     a = str(original_text or "").strip()
     b = str(new_text or "").strip()
     return a == b
+
+
+def _html_user_link(username: str, sender_id: Optional[int] = None) -> str:
+    username = repair_mojibake(username or "").strip().lstrip("@")
+    if re.fullmatch(r"[A-Za-z0-9_]{3,}", username or ""):
+        username_h = html.escape(username)
+        return f'<a href="https://t.me/{username_h}">@{username_h}</a>'
+    if sender_id:
+        try:
+            sender_id_int = int(sender_id)
+        except Exception:
+            sender_id_int = 0
+        if sender_id_int:
+            return f'<a href="tg://user?id={sender_id_int}">ID {sender_id_int}</a>'
+    return "неизвестно"
+
+
+def _html_chat_link(title: str, username: str = "") -> str:
+    username = repair_mojibake(username or "").strip().lstrip("@")
+    if re.fullmatch(r"[A-Za-z0-9_]{3,}", username or ""):
+        username_h = html.escape(username)
+        return f'<a href="https://t.me/{username_h}">@{username_h}</a>'
+    return html.escape(repair_mojibake(title or "—"))
+
+
+def _diff_tokens(value: str) -> List[str]:
+    return re.findall(r"\s+|[^\s]+", value or "")
+
+
+def _bold_changed_html(value: str) -> str:
+    if not value:
+        return ""
+    escaped = html.escape(value)
+    if value.isspace():
+        return escaped
+    return f"<b>{escaped}</b>"
+
+
+def _highlight_message_diff(before: str, after: str) -> Tuple[str, str]:
+    before_tokens = _diff_tokens(before)
+    after_tokens = _diff_tokens(after)
+    matcher = difflib.SequenceMatcher(None, before_tokens, after_tokens, autojunk=False)
+    before_parts: List[str] = []
+    after_parts: List[str] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        before_chunk = "".join(before_tokens[i1:i2])
+        after_chunk = "".join(after_tokens[j1:j2])
+        if tag == "equal":
+            before_parts.append(html.escape(before_chunk))
+            after_parts.append(html.escape(after_chunk))
+        elif tag == "delete":
+            before_parts.append(_bold_changed_html(before_chunk))
+        elif tag == "insert":
+            after_parts.append(_bold_changed_html(after_chunk))
+        else:
+            before_parts.append(_bold_changed_html(before_chunk))
+            after_parts.append(_bold_changed_html(after_chunk))
+
+    return "".join(before_parts).strip(), "".join(after_parts).strip()
 
 
 class DeleteAggregator:
@@ -498,26 +559,6 @@ class DeleteAggregator:
         card_title: str,
         card_lines: List[str],
     ) -> Any:
-        avatar = await self._get_sender_avatar(owner_id, sender_id, sender_username)
-        avatar_bytes = avatar[0] if avatar else None
-        avatar_name = avatar[1] if avatar else "avatar_placeholder.jpg"
-        card_bytes = self._render_meta_card(avatar_bytes, avatar_label, card_title, card_lines)
-        if card_bytes:
-            bio = io.BytesIO(card_bytes)
-            bio.name = f"card_{avatar_name}"
-            bio.seek(0)
-            try:
-                return await self.bot.send_photo(
-                    chat_id=owner_id,
-                    photo=bio,
-                    reply_markup=meta_markup,
-                )
-            finally:
-                try:
-                    bio.close()
-                except Exception:
-                    pass
-
         return await self.bot.send_message(
             chat_id=owner_id,
             text=meta_text,
@@ -550,83 +591,51 @@ class DeleteAggregator:
         ts_edit = format_human_timestamp(item.get("edited_at"), CONFIG.tz_name) if item.get("edited_at") else None
         ts_orig = format_human_timestamp(item.get("message_date"), CONFIG.tz_name)
 
-        sender_h = html.escape(str(sender or ""))
-        chat_h = html.escape(str(chat or ""))
-        text_h = html.escape(text)
-        original_h = html.escape(original_text)
-
-        if event_type == "edited":
-            title = "✏️ <b>Сообщение изменено</b>"
-        elif event_type == "disappearing":
-            title = "👻 <b>Исчезающее сообщение</b>"
-        elif event_type == "story":
-            title = "📸 <b>История сохранена</b>"
-        else:
-            title = "🗑️ <b>Удалённое сообщение</b>"
-
         content_type_display = content_type or guess_content_type_from_path(media_path) or "сообщение"
         content_type_h = html.escape(str(content_type_display))
 
-        sender_label = f"@{sender_h}" if sender_h and not str(sender).startswith("ID ") else (sender_h or "неизвестно")
+        sender_link = _html_user_link(sender_username, sender_id)
+        chat_link = _html_chat_link(chat, chat_username)
         sender_label_plain = f"@{sender}" if sender and not str(sender).startswith("ID ") else (sender or "неизвестно")
-        card_title = html.unescape(re.sub(r"<[^>]+>", "", title))
-        card_lines: List[str] = [
-            f"От: {sender_label_plain}",
-            f"Чат: {chat}",
-            f"Время события: {ts_orig}",
-            f"Тип: {content_type_display}",
-        ]
+
+        event_meta = {
+            "deleted": ("🗑️", "удалил сообщение"),
+            "edited": ("✏️", "отредактировал сообщение"),
+            "disappearing": ("👻", "удалил исчезающее сообщение"),
+            "story": ("📸", "сохранил историю"),
+        }
+        event_icon, event_action = event_meta.get(event_type, ("ℹ️", "сохранил сообщение"))
         meta_lines: List[str] = [
-            title,
-            "",
-            f"👤 <b>От:</b> {sender_label}",
-            f"💬 <b>Чат:</b> {chat_h}",
+            f"{event_icon} {sender_link} <b>{event_action}</b>",
+            f"💬 <b>Чат:</b> {chat_link}",
             f"🕒 <b>Время события:</b> {ts_orig}",
             f"📄 <b>Тип:</b> {content_type_h}",
         ]
 
         if event_type == "deleted":
             meta_lines.append(f"❌ <b>Удалено:</b> {ts_del}")
-            card_lines.append(f"Удалено: {ts_del}")
         elif event_type == "edited":
             meta_lines.append(f"✏️ <b>Изменено:</b> {ts_edit or ts_orig}")
-            card_lines.append(f"Изменено: {ts_edit or ts_orig}")
             if edit_count > 0:
                 meta_lines.append(f"🔁 <b>Изменений:</b> {edit_count}")
-                card_lines.append(f"Изменений: {edit_count}")
 
         views = int(item.get("views") or 0)
         reactions_display = format_reactions_display(item.get("reactions", "{}"))
         if event_type == "deleted" and views > 0:
             meta_lines.append(f"👁️ <b>Просмотров:</b> {views}")
-            card_lines.append(f"Просмотров: {views}")
         if event_type == "deleted" and reactions_display:
             meta_lines.append(f"❤️ <b>Реакции:</b> {reactions_display}")
-            card_lines.append(f"Реакции: {reactions_display}")
-        footer_map = {
-            "deleted": "удаленное сообщение",
-            "edited": "отредактированное сообщение",
-            "disappearing": "исчезающее сообщение",
-        }
-        footer_text = footer_map.get(event_type, "сообщение")
-        meta_lines.extend(["", f"<i>{footer_text}</i>"])
 
         meta_text = "\n".join(meta_lines)
 
-        buttons: List[List[InlineKeyboardButton]] = []
-        row: List[InlineKeyboardButton] = []
-        target_username = sender_username if event_type in {"deleted", "edited"} and sender_username else chat_username
-        if target_username:
-            row.append(InlineKeyboardButton("↗️ Перейти в чат", url=f"https://t.me/{target_username}"))
+        mute_markup: Optional[InlineKeyboardMarkup] = None
         if event_type in {"deleted", "edited"} and chat_id is not None:
             try:
-                row.append(InlineKeyboardButton("🔇 Заглушить чат", callback_data=f"mute_chat:{int(chat_id)}"))
+                mute_markup = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔇 Заглушить чат", callback_data=f"mute_chat:{int(chat_id)}")
+                ]])
             except Exception:
                 pass
-        if row:
-            buttons.append(row)
-
-        meta_markup = InlineKeyboardMarkup(buttons) if buttons else None
 
         try:
             log_outgoing_message(owner_id, meta_text)
@@ -636,26 +645,27 @@ class DeleteAggregator:
         last_message: Optional[Any] = await self._send_meta_message(
             owner_id,
             meta_text,
-            meta_markup,
+            None,
             sender_id=sender_id,
             sender_username=sender_username_raw,
             avatar_label=sender_label_plain,
-            card_title=card_title,
-            card_lines=card_lines,
+            card_title="",
+            card_lines=[],
         )
 
         # Сначала отправляем описание/текст, затем файл.
         details_parts: List[str] = []
-        if event_type == "edited" and edit_count > 0 and original_text and original_text != text:
+        if event_type == "edited" and original_text and original_text != text:
+            before_h, after_h = _highlight_message_diff(original_text, text)
             details_parts.append("📝 <b>Что изменилось</b>")
             details_parts.append("")
-            details_parts.append(f"<b>Было:</b>\n{original_h}")
+            details_parts.append(f"<b>До:</b>\n{before_h or '—'}")
             details_parts.append("")
-            details_parts.append(f"<b>Стало:</b>\n{text_h}")
+            details_parts.append(f"<b>После:</b>\n{after_h or '—'}")
         elif text.strip():
-            details_parts.append("📝 <b>Содержимое</b>")
+            details_parts.append("📝 <b>Сообщение</b>")
             details_parts.append("")
-            details_parts.append(text_h)
+            details_parts.append(html.escape(text))
 
         details_text = "\n".join(details_parts).strip()
 
@@ -666,12 +676,21 @@ class DeleteAggregator:
                     chat_id=owner_id,
                     text=details_text,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=mute_markup,
                 )
+                mute_markup = None
             else:
-                compact = details_text[:3797] + "..."
-                await self.bot.send_message(chat_id=owner_id, text=compact, parse_mode=ParseMode.HTML)
+                plain_details = html.unescape(re.sub(r"<[^>]*>", "", details_text))
+                compact = html.escape(_short_text(plain_details, 3600))
+                last_message = await self.bot.send_message(
+                    chat_id=owner_id,
+                    text=compact,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=mute_markup,
+                )
+                mute_markup = None
                 loop = asyncio.get_running_loop()
-                full_bytes = await loop.run_in_executor(None, lambda: (text or "").encode("utf-8"))
+                full_bytes = await loop.run_in_executor(None, lambda: (plain_details or "").encode("utf-8"))
                 bio = io.BytesIO(full_bytes)
                 bio.name = f"message_{item.get('msg_id', 'unknown')}.txt"
                 bio.seek(0)
@@ -695,24 +714,27 @@ class DeleteAggregator:
                 bio.seek(0)
 
                 if "video_note" in ctype or "кружочек" in ctype:
-                    last_message = await self.bot.send_video_note(chat_id=owner_id, video_note=bio)
+                    last_message = await self.bot.send_video_note(chat_id=owner_id, video_note=bio, reply_markup=mute_markup)
                 elif ext in (".mp4", ".mov", ".mkv", ".webm") or "video" in ctype:
-                    last_message = await self.bot.send_video(chat_id=owner_id, video=bio, supports_streaming=True)
+                    last_message = await self.bot.send_video(chat_id=owner_id, video=bio, supports_streaming=True, reply_markup=mute_markup)
                 elif ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif") or "photo" in ctype or "image" in ctype:
-                    last_message = await self.bot.send_photo(chat_id=owner_id, photo=bio)
+                    last_message = await self.bot.send_photo(chat_id=owner_id, photo=bio, reply_markup=mute_markup)
                 elif ext in (".ogg", ".oga") or "voice" in ctype:
-                    last_message = await self.bot.send_voice(chat_id=owner_id, voice=bio)
+                    last_message = await self.bot.send_voice(chat_id=owner_id, voice=bio, reply_markup=mute_markup)
                 elif ext in (".mp3", ".wav", ".m4a") or "audio" in ctype:
-                    last_message = await self.bot.send_audio(chat_id=owner_id, audio=bio)
+                    last_message = await self.bot.send_audio(chat_id=owner_id, audio=bio, reply_markup=mute_markup)
                 else:
-                    last_message = await self.bot.send_document(chat_id=owner_id, document=bio)
+                    last_message = await self.bot.send_document(chat_id=owner_id, document=bio, reply_markup=mute_markup)
+                mute_markup = None
             except Exception:
                 try:
                     logger.exception("Failed to send media to owner %s from %s", owner_id, media_path)
                     await self.bot.send_message(
                         chat_id=owner_id,
-                        text="⚠️ Файл не удалось отправить автоматически."
+                        text="⚠️ Файл не удалось отправить автоматически.",
+                        reply_markup=mute_markup,
                     )
+                    mute_markup = None
                 except Exception:
                     pass
             finally:
@@ -723,7 +745,7 @@ class DeleteAggregator:
                         pass
 
         if last_message is None:
-            return await self.bot.send_message(chat_id=owner_id, text="ℹ️ (без контента)")
+            return await self.bot.send_message(chat_id=owner_id, text="ℹ️ (без контента)", reply_markup=mute_markup)
         return last_message
 
 class EventHandler:
