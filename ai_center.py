@@ -26,7 +26,11 @@ def html_escape(s: Optional[str]) -> str:
 
 AI_APP_HOST = os.getenv("AI_APP_HOST", "0.0.0.0")
 AI_APP_PORT = int(os.getenv("AI_APP_PORT", "8000"))
-AI_WEBAPP_URL = os.getenv("AI_WEBAPP_URL", f"http://localhost:{AI_APP_PORT}/miniapp")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+AI_WEBAPP_URL = os.getenv(
+    "AI_WEBAPP_URL",
+    f"{RENDER_EXTERNAL_URL}/miniapp" if RENDER_EXTERNAL_URL else f"http://localhost:{AI_APP_PORT}/miniapp",
+)
 AI_MAX_RESULT_ROWS = int(os.getenv("AI_MAX_RESULT_ROWS", "40"))
 AI_MAX_ANSWER_CHARS = int(os.getenv("AI_MAX_ANSWER_CHARS", "700"))
 AI_MAX_QUESTION_CHARS = int(os.getenv("AI_MAX_QUESTION_CHARS", "700"))
