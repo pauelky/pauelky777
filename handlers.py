@@ -12,6 +12,7 @@ from .aiogram_compat import Update
 
 AUTH_CODE_TTL_SEC = 20 * 60
 AUTH_2FA_TTL_SEC = 20 * 60
+SAVEDBOT_BUILD_LABEL = "free-build-2026-05-26"
 
 
 def _build_code_sent_text(*, resent: bool = False) -> str:
@@ -141,6 +142,10 @@ def build_start_keyboard() -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton("Открыть архив", callback_data="start_open_archive")])
 
     return InlineKeyboardMarkup(rows)
+
+
+def _build_marker_line() -> str:
+    return f"<code>{SAVEDBOT_BUILD_LABEL}</code>"
 
 
 def _build_set_root_keyboard() -> InlineKeyboardMarkup:
@@ -500,7 +505,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         m = await send_and_log(
             context.bot,
             uid,
-            welcome_message,
+            f"{welcome_message}\n\n{_build_marker_line()}",
             username=uname,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
@@ -538,7 +543,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             "<b>SavedBot подключен.</b>\n\n"
             "Архив работает в фоне.\n"
-            "Можно открыть статистику или Mini App."
+            "Можно открыть статистику или Mini App.\n\n"
+            f"{_build_marker_line()}"
         )
 
         await send_and_log(
@@ -574,7 +580,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• сохраняю удалённые и изменённые сообщения\n"
         "• храню медиа и историю правок\n"
         "• показываю архив в Mini App\n\n"
-        "Выберите способ подключения ниже."
+        "Выберите способ подключения ниже.\n\n"
+        f"{_build_marker_line()}"
     )
 
     m = await send_and_log(
@@ -2150,6 +2157,21 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
             await query.edit_message_text("❌ Ошибка при заглушении чата. Попробуйте снова.")
         return
 
+    await _update_auth_message(
+        context.bot,
+        app,
+        uid,
+        uname,
+        (
+            "<b>Меню обновлено.</b>\n\n"
+            "Откройте актуальное меню через /start.\n\n"
+            f"{_build_marker_line()}"
+        ),
+        message_id=getattr(query.message, "message_id", None),
+        reply_markup=build_start_keyboard(),
+    )
+    return
+
 
 # ----------------------------
 # Main loop / bootstrap
@@ -2316,6 +2338,10 @@ async def run_bot() -> None:
     logger.info("Starting aiogram polling...")
 
     try:
+        try:
+            await application.native_bot.delete_webhook(drop_pending_updates=True)
+        except Exception:
+            logger.debug("delete_webhook before polling failed", exc_info=True)
         await dispatcher.start_polling(
             application.native_bot,
             handle_as_tasks=True,
