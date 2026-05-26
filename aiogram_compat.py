@@ -402,40 +402,6 @@ class CompatBot:
         )
         return CompatMessage(message, self)
 
-    async def send_invoice(
-        self,
-        chat_id: int,
-        title: str,
-        description: str,
-        payload: str,
-        currency: str,
-        prices: list[Any],
-        **kwargs: Any,
-    ) -> CompatMessage:
-        message = await self._native_bot.send_invoice(
-            chat_id=chat_id,
-            title=_normalize_text(title),
-            description=_normalize_text(description),
-            payload=payload,
-            currency=currency,
-            prices=prices,
-            reply_markup=_normalize_reply_markup(kwargs.pop("reply_markup", None)),
-            **kwargs,
-        )
-        return CompatMessage(message, self)
-
-    async def answer_pre_checkout_query(
-        self,
-        pre_checkout_query_id: str,
-        ok: bool,
-        **kwargs: Any,
-    ) -> Any:
-        return await self._native_bot.answer_pre_checkout_query(
-            pre_checkout_query_id=pre_checkout_query_id,
-            ok=ok,
-            **kwargs,
-        )
-
     async def edit_message_text(self, chat_id: int, message_id: int, text: str, **kwargs: Any) -> Any:
         result = await self._native_bot.edit_message_text(
             chat_id=chat_id,

@@ -620,10 +620,6 @@ MINIAPP_TEMPLATE = """<!DOCTYPE html>
               <div class="status-label">Язык</div>
               <div class="status-value" id="profile-language">\u2014</div>
             </div>
-            <div class="status-tile">
-              <div class="status-label">Telegram Premium</div>
-              <div class="status-value" id="profile-premium">\u2014</div>
-            </div>
           </div>
         <div class="summary-grid">
           <div class="summary-tile">
@@ -794,7 +790,6 @@ MINIAPP_TEMPLATE = """<!DOCTYPE html>
     const profileSessionEl = document.getElementById("profile-session");
     const profileWatcherEl = document.getElementById("profile-watcher");
     const profileLanguageEl = document.getElementById("profile-language");
-    const profilePremiumEl = document.getElementById("profile-premium");
     const profileAvatarEl = document.getElementById("profile-avatar");
     const profileAvatarFallbackEl = document.getElementById("profile-avatar-fallback");
     const totalDeletedEl = document.getElementById("stat-total-deleted");
@@ -1003,7 +998,6 @@ MINIAPP_TEMPLATE = """<!DOCTYPE html>
       profileSessionEl.textContent = sessionText;
       profileWatcherEl.textContent = watcherText;
       profileLanguageEl.textContent = profile && profile.language_code ? String(profile.language_code).toUpperCase() : "Не указан";
-      profilePremiumEl.textContent = profile && profile.is_premium ? "Да" : "Нет";
       identityPill.textContent = profile && profile.user_id ? `${name} · ID ${profile.user_id}` : "Пользователь не определен";
       sessionStateCopyEl.textContent = meta.session_active
         ? "Сессия активна. Можно продолжать работу с архивом и аналитикой."
@@ -1297,7 +1291,6 @@ class AIUserProfile(BaseModel):
     initials: str = "U"
     language_code: str = ""
     source: str = "telegram"
-    is_premium: bool = False
 
 
 class AIOverviewChatItem(BaseModel):
@@ -1702,7 +1695,6 @@ def _build_profile_payload(user_id: int, source: str, user_data: Optional[Dict[s
         "initials": initials or "U",
         "language_code": language_code,
         "source": source,
-        "is_premium": bool(user_data.get("is_premium")),
     }
 
 

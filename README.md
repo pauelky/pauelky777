@@ -4,7 +4,7 @@ Production-ready MVP stack:
 - Telegram bot: `aiogram + Telethon`
 - Mini App / API: `FastAPI`
 - Storage: `SQLite (WAL + migrations in app init)`
-- Saved messages, alerts, daily analytics and Mini App tools without paid limits
+- Saved messages, alerts, daily analytics and Mini App tools
 
 ## 1) Local Run
 

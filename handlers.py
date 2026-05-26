@@ -237,7 +237,7 @@ async def _build_set_profile_text(app: "App", user: Any) -> str:
         f"• Username: <b>{html_escape(display_username_view)}</b>\n"
         f"• User ID: <code>{uid}</code>\n"
         f"• С нами с: <b>{html_escape(joined_text)}</b>\n"
-        "• Доступ: <b>без подписки и лимитов</b>"
+        "• Доступ: <b>открыт</b>"
     )
 
 
@@ -740,7 +740,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set — настройки\n"
         "• /profile — профиль\n"
         "• /logout — выйти\n\n"
-        "<b>Доступ:</b> все функции открыты без подписки, тарифов и лимитов."
+        "<b>Доступ:</b> все функции открыты."
     )
     await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML, reply_markup=build_start_keyboard())
 
@@ -820,7 +820,7 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• ID: <code>{uid}</code>\n"
         f"• С нами с: <b>{html_escape(joined_date_text)}</b>\n"
         f"• Дней с сервисом: <b>{days_with_us}</b>\n"
-        "• Доступ: <b>все функции открыты без подписки и лимитов</b>"
+        "• Доступ: <b>все функции открыты</b>"
     )
     await send_and_log(
         context.bot,

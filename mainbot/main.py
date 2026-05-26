@@ -5226,24 +5226,6 @@ async def require_admin(update: Update) -> bool:
             await update.effective_message.reply_text("⛔ Нет доступа")
     return False
 
-async def require_subscription(update: Update, context: any) -> bool:
-    """Check if user is in the required chat/group. Return True if subscribed, False otherwise."""
-    try:
-        required_chat = globals().get("REQUIRED_CHAT_ID", "@pauelkyy_group")
-        user_id = update.effective_user.id if update.effective_user else None
-        
-        if not user_id:
-            if update.message:
-                await update.message.reply_text("Не удалось определить пользователя. Попробуй ещё раз.")
-            return False
-        
-        # For now, allow all users (you can add actual subscription check here)
-        # This is a placeholder implementation
-        return True
-    except Exception as e:
-        logging.exception("Error in require_subscription: %s", e)
-        return True
-
 # ---- Broadcast (text or voice) ----
 async def broadcast(update: Update, context: any):
     if not await is_owner(update):
@@ -5810,7 +5792,7 @@ async def _call_stability_core(
             return None
 
         if status == 402:
-            logging.error("402 Payment Required — пополни кредиты: https://platform.stability.ai/account/credits")
+            logging.error("Stability API вернул 402")
             return None
 
         if status in (401, 403):
@@ -6034,9 +6016,6 @@ async def owner_sendto(update: Update, context: any):
 
 # ---- start / profile / help (owner-aware) ----
 async def start(update: Update, context: any):
-    if not await require_subscription(update, context):
-        return
-
     user_id = update.effective_user.id
     globals().get("users_store").ensure_user(user_id, username=update.effective_user.username, first_name=update.effective_user.first_name)
     user_obj = globals().get("users_store").get_user(user_id) or {}
@@ -6118,8 +6097,6 @@ async def start(update: Update, context: any):
                 break
 
 async def profile_command(update: Update, context: any):
-    if not await require_subscription(update, context):
-        return
     if not update.effective_user:
         return
     user_id = update.effective_user.id
@@ -6144,8 +6121,6 @@ async def profile_command(update: Update, context: any):
     await update.effective_message.reply_text(profile_text, reply_markup=globals().get("reply_markup"))
 
 async def help_command(update: Update, context: any):
-    if not await require_subscription(update, context):
-        return
     help_text = build_help_text()
     try:
         if update.effective_user and update.effective_user.id == globals().get("OWNER_ID"):
@@ -6161,8 +6136,6 @@ async def help_command(update: Update, context: any):
 
 async def role_command(update: Update, context: any):
     """Команда /role — выбор стиля ответа."""
-    if not await require_subscription(update, context):
-        return
     current = context.user_data.get("reply_style", "neutral")
     r = ROLES.get(current, ("⚖️ Сбалансированно", ""))
     text = (
@@ -8474,9 +8447,6 @@ async def _handle_photo_message_impl(update: Update, context: ContextTypes.DEFAU
     if not update.message or not update.message.photo:
         return
 
-    if not await require_subscription(update, context):
-        return
-
     user_id = update.effective_user.id
     if user_id in globals().get("banned_users", set()):
         await update.message.reply_text("Доступ сейчас ограничен. Если это ошибка, напиши администратору.")
@@ -8647,9 +8617,7 @@ async def _handle_message_impl(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             logging.debug("log_user_activity failed", exc_info=True)
 
-    # проверка подписки и бана
-    if not await require_subscription(update, context):
-        return
+    # проверка блокировки
     if user_id in globals().get("banned_users", set()):
         await message.reply_text("Доступ сейчас ограничен. Если это ошибка, напиши администратору.")
         return
@@ -8912,8 +8880,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def _handle_voice_message_impl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.voice:
-        return
-    if not await require_subscription(update, context):
         return
     user_id = update.effective_user.id
     if user_id in globals().get("banned_users", set()):
