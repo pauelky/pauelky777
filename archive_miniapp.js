@@ -877,8 +877,8 @@
       const errStatus = err && err.status ? ` (${err.status})` : "";
       
       if (err && (err.status === 401 || err.status === 402)) {
-        // Authentication or subscription error - show to user and lock
-        console.error("[Mini App] CRITICAL: Auth/subscription error:", errStatus, errMsg);
+        // Authentication error - show to user and lock
+        console.error("[Mini App] CRITICAL: Auth error:", errStatus, errMsg);
         setFatalState(errMsg + errStatus);
       } else if (err && err.status === 503) {
         console.warn("[Mini App] Backend temporarily unavailable, retrying...");

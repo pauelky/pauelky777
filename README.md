@@ -4,8 +4,7 @@ Production-ready MVP stack:
 - Telegram bot: `aiogram + Telethon`
 - Mini App / API: `FastAPI`
 - Storage: `SQLite (WAL + migrations in app init)`
-- Payments: Telegram Stars (`XTR`)
-- Referrals, trial, subscriptions, alerts, daily analytics
+- Saved messages, alerts, daily analytics and Mini App tools without paid limits
 
 ## 1) Local Run
 
@@ -86,7 +85,7 @@ and redeploy.
 
 ## 4) Telegram / BotFather Setup
 
-1. Ensure bot has username (mandatory for referral links).
+1. Ensure bot has username.
 2. In BotFather set Mini App URL to production HTTPS:
 `https://<your-domain>/miniapp`
 3. If username cannot be fetched at runtime, set fallback:

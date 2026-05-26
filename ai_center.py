@@ -1958,13 +1958,6 @@ def _resolve_identity(payload: Dict[str, Any]) -> AIIdentityContext:
             user_id = int(user_data["id"])
             logger.debug("✅ Telegram auth successful for user_id=%s", user_id)
             
-            if not is_user_subscription_active_sync(user_id):
-                logger.warning("❌ User %s subscription inactive", user_id)
-                raise HTTPException(
-                    status_code=402,
-                    detail="Подписка неактивна. Откройте бота и оплатите тариф командой /plans.",
-                )
-            
             REQUEST_CONTEXT_USER_ID.set(user_id)
             return AIIdentityContext(
                 user_id=user_id,
@@ -1994,13 +1987,6 @@ def _resolve_identity(payload: Dict[str, Any]) -> AIIdentityContext:
             raise HTTPException(
                 status_code=401,
                 detail="Локальный режим разрешен только для admin user_id. Откройте Mini App через Telegram.",
-            )
-        
-        if not is_user_subscription_active_sync(user_id):
-            logger.warning("❌ Local user %s subscription inactive", user_id)
-            raise HTTPException(
-                status_code=402,
-                detail="Подписка неактивна. Откройте бота и оплатите тариф командой /plans.",
             )
         
         REQUEST_CONTEXT_USER_ID.set(user_id)

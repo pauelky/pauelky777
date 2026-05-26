@@ -7,8 +7,6 @@ from . import ai_center as ai_center_module
 from aiogram import Dispatcher, Router
 from aiogram.types import CallbackQuery as AiogramCallbackQuery
 from aiogram.types import Message as AiogramMessage
-from aiogram.types import PreCheckoutQuery as AiogramPreCheckoutQuery
-from aiogram.types import LabeledPrice
 from aiogram.types import BotCommand
 from .aiogram_compat import Update
 
@@ -124,22 +122,6 @@ def _auth_expires_at(ttl_sec: int) -> float:
     return time.time() + float(ttl_sec)
 
 
-def _build_billing_keyboard() -> InlineKeyboardMarkup:
-    rows: List[List[InlineKeyboardButton]] = []
-    for tariff in get_subscription_tariffs():
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    f"⭐ {SUBSCRIPTION_PRODUCT_NAME}: {tariff['label']} — {tariff['stars']} Stars",
-                    callback_data=f"billing_buy:{tariff['key']}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton("🔄 Проверить подписку", callback_data="billing_status")])
-    rows.append([InlineKeyboardButton("🎁 Реферальная программа", callback_data="billing_referral_info")])
-    return InlineKeyboardMarkup(rows)
-
-
 def build_start_keyboard() -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = [
         [
@@ -158,12 +140,6 @@ def build_start_keyboard() -> InlineKeyboardMarkup:
     else:
         rows.append([InlineKeyboardButton("Открыть архив", callback_data="start_open_archive")])
 
-    rows.append(
-        [
-            InlineKeyboardButton("Подписка Plus", callback_data="billing_open"),
-            InlineKeyboardButton("Рефералы", callback_data="billing_referral_info"),
-        ]
-    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -171,8 +147,6 @@ def _build_set_root_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("👤 Профиль", callback_data="set_profile")],
-            [InlineKeyboardButton("🎁 Реферальная программа", callback_data="set_referral")],
-            [InlineKeyboardButton("💎 Подписка Plus", callback_data="set_plus")],
             [InlineKeyboardButton("🎚 Настройки прослушивания", callback_data="set_listen_menu")],
             [InlineKeyboardButton("✨ Чем мы отличаемся", callback_data="set_help")],
         ]
@@ -220,181 +194,6 @@ async def _get_bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
     return env_fallback
 
 
-async def _build_referral_link(context: ContextTypes.DEFAULT_TYPE, uid: int) -> str:
-    bot_username = await _get_bot_username(context)
-    if not bot_username:
-        return ""
-    payload = build_referral_start_payload(uid)
-    return f"https://t.me/{bot_username}?start={payload}"
-
-
-async def _build_referral_program_text(
-    app: "App",
-    context: ContextTypes.DEFAULT_TYPE,
-    uid: int,
-) -> str:
-    stats = await get_referral_stats(app.db, uid)
-    discount = await get_active_discount_credit(app.db, uid)
-    discount_line = "нет активной"
-    if discount:
-        percent = int(discount.get("percent_off") or REFERRAL_DISCOUNT_PERCENT)
-        expires = format_subscription_until(discount.get("expires_at"), app.config.tz_name)
-        discount_line = f"{percent}% (до {html_escape(expires)})"
-
-    referral_link = await _build_referral_link(context, uid)
-    link_line = (
-        html_escape(referral_link)
-        if referral_link
-        else "ссылка временно недоступна: задайте username через @BotFather или укажите BOT_USERNAME в env"
-    )
-
-    return (
-        "🎁 <b>Реферальная программа</b>\n\n"
-        "• Если приглашённый пользователь купит <b>12 месяцев</b> — вы получите <b>1 месяц подписки в подарок</b>.\n"
-        "• Если приглашённый купит <b>1 или 3 месяца</b> — вы получите <b>скидку 10% на следующую покупку</b>.\n\n"
-        "<b>Ваша статистика:</b>\n"
-        f"• Приглашено: <b>{int(stats.get('invited_total', 0))}</b>\n"
-        f"• Конверсий в оплату: <b>{int(stats.get('converted_total', 0))}</b>\n"
-        f"• Подарочных месяцев выдано: <b>{int(stats.get('gift_rewards', 0))}</b>\n"
-        f"• Получено скидок 10%: <b>{int(stats.get('discount_rewards', 0))}</b>\n"
-        f"• Активная скидка: <b>{discount_line}</b>\n\n"
-        f"<b>Ваша ссылка:</b>\n<code>{link_line}</code>\n\n"
-        "<b>Готовый текст для пересылки:</b>\n"
-        f"<code>Подключай SavedBot: удалённые и изменённые сообщения остаются в архиве. "
-        f"2 дня free trial, без Telegram Premium. {link_line}</code>"
-    )
-
-
-async def _build_subscription_status_text(app: "App", uid: int) -> str:
-    if not CONFIG.billing_enabled:
-        return (
-            "✅ <b>Подписка не требуется</b>\n\n"
-            "Тарифная система сейчас отключена конфигом."
-        )
-    if uid in CONFIG.admin_ids:
-        return (
-            "👑 <b>Режим администратора</b>\n\n"
-            "Для администраторов доступ открыт без тарифных ограничений."
-        )
-
-    sub = await ensure_free_trial_subscription(app.db, uid)
-    plan_key = str(sub.get("plan_key") or "").strip().lower() if sub else ""
-    is_trial = plan_key == "trial"
-    expires_raw = str(sub.get("expires_at") or "") if sub else ""
-    days_left = _days_left_from_iso(expires_raw, now_utc=datetime.now(timezone.utc)) if expires_raw else 0
-    if is_subscription_dict_active(sub):
-        expires_text = format_subscription_until(sub.get("expires_at"), app.config.tz_name)
-        header = "🆓 <b>Бесплатный пробный доступ активен</b>" if is_trial else f"✅ <b>{SUBSCRIPTION_PRODUCT_NAME} активен</b>"
-        plan_label = get_plan_label(plan_key or "1m")
-        perks = (
-            "• Доступ ко всем функциям\n"
-            "• Сохранение одноразовых медиа\n"
-            "• Без лимитов и ограничений"
-        )
-        trial_ending = ""
-        if is_trial and days_left <= 1:
-            trial_ending = "\n\n⏳ Пробный период заканчивается сегодня. Чтобы не терять доступ, продлите на Plus."
-        return (
-            f"{header}\n\n"
-            f"План: <b>{html_escape(plan_label)}</b>\n"
-            f"Действует до: <b>{html_escape(expires_text)}</b>\n\n"
-            f"{perks}{trial_ending}"
-        )
-
-    saved_deleted = 0
-    saved_edited = 0
-    try:
-        row_del = await app.db.fetchone("SELECT COUNT(*) FROM deleted_messages WHERE owner_id=?", (uid,))
-        row_edt = await app.db.fetchone(
-            """
-            SELECT COUNT(*)
-            FROM chat_thread_messages
-            WHERE owner_id=?
-              AND (COALESCE(status,'active')='edited' OR COALESCE(edit_count, 0) > 0)
-            """,
-            (uid,),
-        )
-        saved_deleted = int(row_del[0]) if row_del else 0
-        saved_edited = int(row_edt[0]) if row_edt else 0
-    except Exception:
-        logger.debug("Failed to collect paywall counters for uid=%s", uid, exc_info=True)
-
-    value_line = ""
-    if saved_deleted > 0 or saved_edited > 0:
-        value_line = (
-            "\n\n"
-            f"Вы уже сохранили: <b>{saved_deleted}</b> удалённых и <b>{saved_edited}</b> изменённых сообщений."
-        )
-
-    if sub:
-        expires_text = format_subscription_until(sub.get("expires_at"), app.config.tz_name)
-        if is_trial:
-            return (
-                "⌛ <b>Пробный период завершён</b>\n\n"
-                f"Пробный доступ закончился: <b>{html_escape(expires_text)}</b>\n\n"
-                f"Подключите <b>{SUBSCRIPTION_PRODUCT_NAME}</b>, чтобы продолжить пользоваться ботом без ограничений."
-                f"{value_line}"
-            )
-        return (
-            f"⚠️ <b>{SUBSCRIPTION_PRODUCT_NAME} неактивен</b>\n\n"
-            f"Последний тариф: <b>{html_escape(get_plan_label(str(sub.get('plan_key') or '1m')))}</b>\n"
-            f"Истекла: <b>{html_escape(expires_text)}</b>\n\n"
-            f"Продлите доступ одним из тарифов ниже.{value_line}"
-        )
-
-    return (
-        f"💳 <b>Для использования бота нужен {SUBSCRIPTION_PRODUCT_NAME}</b>\n\n"
-        f"Выберите тариф и оплатите в Telegram Stars.{value_line}"
-    )
-
-
-async def _ensure_subscription_or_notify(
-    app: "App",
-    context: ContextTypes.DEFAULT_TYPE,
-    uid: int,
-    *,
-    uname: Optional[str] = None,
-    send_notice: bool = True,
-) -> bool:
-    if not CONFIG.billing_enabled or uid in CONFIG.admin_ids:
-        return True
-    active = await is_user_subscription_active(app.db, uid)
-    if active:
-        return True
-
-    try:
-        await app.watcher_service.stop(uid)
-    except Exception:
-        logger.debug("Failed to stop watcher for unsubscribed user %s", uid, exc_info=True)
-
-    if send_notice:
-        text = await _build_subscription_status_text(app, uid)
-        await send_and_log(
-            context.bot,
-            uid,
-            text,
-            username=uname,
-            parse_mode=ParseMode.HTML,
-            reply_markup=_build_billing_keyboard(),
-        )
-    return False
-
-
-def _days_left_from_iso(expires_raw: str, *, now_utc: Optional[datetime] = None) -> int:
-    raw = str(expires_raw or "").strip()
-    if not raw:
-        return 0
-    now_dt = now_utc or datetime.now(timezone.utc)
-    try:
-        exp_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if exp_dt.tzinfo is None:
-            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-        seconds_left = max(0, int((exp_dt.astimezone(timezone.utc) - now_dt.astimezone(timezone.utc)).total_seconds()))
-        return max(1, (seconds_left + 86399) // 86400) if seconds_left > 0 else 0
-    except Exception:
-        return 0
-
-
 def _start_advantages_text() -> str:
     return (
         "<b>SavedBot умеет:</b>\n\n"
@@ -429,14 +228,6 @@ async def _build_set_profile_text(app: "App", user: Any) -> str:
         except Exception:
             joined_text = first_seen_iso[:10] if len(first_seen_iso) >= 10 else first_seen_iso
 
-    sub = await ensure_free_trial_subscription(app.db, uid)
-    active = is_subscription_dict_active(sub)
-    plan_key = str(sub.get("plan_key") or "").strip().lower() if sub else ""
-    plan_label = get_plan_label(plan_key or "1m") if sub else "—"
-    expires_raw = str(sub.get("expires_at") or "").strip() if sub else ""
-    expires_text = format_subscription_until(expires_raw, app.config.tz_name) if expires_raw else "—"
-    days_left = _days_left_from_iso(expires_raw, now_utc=now_utc)
-    status_text = "активна" if active else "неактивна"
     display_username = stored_username or username or "—"
     display_username_view = f"@{display_username}" if display_username != "—" else "—"
 
@@ -445,164 +236,9 @@ async def _build_set_profile_text(app: "App", user: Any) -> str:
         f"• Имя: <b>{html_escape(getattr(user, 'full_name', '') or getattr(user, 'first_name', '') or '—')}</b>\n"
         f"• Username: <b>{html_escape(display_username_view)}</b>\n"
         f"• User ID: <code>{uid}</code>\n"
-        f"• С нами с: <b>{html_escape(joined_text)}</b>\n\n"
-        f"<b>{SUBSCRIPTION_PRODUCT_NAME}</b>\n"
-        f"• Статус: <b>{status_text}</b>\n"
-        f"• План: <b>{html_escape(plan_label)}</b>\n"
-        f"• Осталось дней: <b>{days_left}</b>\n"
-        f"• Действует до: <b>{html_escape(expires_text)}</b>"
+        f"• С нами с: <b>{html_escape(joined_text)}</b>\n"
+        "• Доступ: <b>без подписки и лимитов</b>"
     )
-
-
-def _build_invoice_payload(
-    plan_key: str,
-    uid: int,
-    *,
-    final_amount: int,
-    discount_credit_id: int = 0,
-) -> str:
-    return f"subv2:{plan_key}:{int(uid)}:{int(final_amount)}:{max(0, int(discount_credit_id or 0))}:{int(time.time())}"
-
-
-def _parse_invoice_payload(payload: str) -> Dict[str, Any]:
-    text = str(payload or "").strip()
-    result: Dict[str, Any] = {
-        "plan_key": None,
-        "uid": None,
-        "final_amount": None,
-        "discount_credit_id": 0,
-        "version": "invalid",
-    }
-    match_v2 = re.match(r"^subv2:([a-z0-9]+):(\d+):(\d+):(\d+):(\d+)$", text)
-    if match_v2:
-        plan_key = match_v2.group(1).lower()
-        if plan_key not in SUBSCRIPTION_PLAN_MONTHS:
-            return result
-        try:
-            result["plan_key"] = plan_key
-            result["uid"] = int(match_v2.group(2))
-            result["final_amount"] = int(match_v2.group(3))
-            result["discount_credit_id"] = int(match_v2.group(4))
-            result["version"] = "v2"
-            return result
-        except Exception:
-            return result
-
-    # Backward compatibility for already issued invoices.
-    match_old = re.match(r"^sub:([a-z0-9]+):(\d+):(\d+)$", text)
-    if match_old:
-        plan_key = match_old.group(1).lower()
-        if plan_key not in SUBSCRIPTION_PLAN_MONTHS:
-            return result
-        try:
-            result["plan_key"] = plan_key
-            result["uid"] = int(match_old.group(2))
-            result["final_amount"] = None
-            result["discount_credit_id"] = 0
-            result["version"] = "v1"
-            return result
-        except Exception:
-            return result
-
-    return result
-
-
-async def _send_plan_invoice(
-    app: "App",
-    context: ContextTypes.DEFAULT_TYPE,
-    uid: int,
-    plan_key: str,
-    *,
-    uname: Optional[str] = None,
-) -> None:
-    key = str(plan_key or "").strip().lower()
-    if key not in SUBSCRIPTION_PLAN_MONTHS:
-        await send_and_log(
-            context.bot,
-            uid,
-            "❌ Неизвестный тариф. Обновите список и попробуйте снова.",
-            username=uname,
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-    tariff = next((item for item in get_subscription_tariffs() if item["key"] == key), None)
-    if not tariff:
-        await send_and_log(
-            context.bot,
-            uid,
-            "❌ Тариф временно недоступен.",
-            username=uname,
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-    base_amount = int(tariff["stars"])
-    discount_credit = await get_active_discount_credit(app.db, uid)
-    discount_credit_id = 0
-    final_amount = base_amount
-    discount_text = ""
-    if discount_credit:
-        percent = int(discount_credit.get("percent_off") or REFERRAL_DISCOUNT_PERCENT)
-        final_amount = apply_percent_discount(base_amount, percent)
-        discount_credit_id = int(discount_credit.get("id") or 0)
-        discount_text = (
-            f"\n\nПрименена скидка: <b>{percent}%</b>\n"
-            f"Итог к оплате: <b>{final_amount} ⭐</b> вместо <s>{base_amount} ⭐</s>."
-        )
-
-    payload = _build_invoice_payload(
-        key,
-        uid,
-        final_amount=final_amount,
-        discount_credit_id=discount_credit_id,
-    )
-    title = f"{SUBSCRIPTION_PRODUCT_NAME} — {tariff['label']}"
-    description = (
-        f"Доступ к функциям {SUBSCRIPTION_PRODUCT_NAME} на {tariff['label']}.\n"
-        f"Стоимость: {final_amount} звезд Telegram."
-    )
-    try:
-        await context.bot.send_invoice(
-            chat_id=uid,
-            title=title,
-            description=description,
-            payload=payload,
-            currency="XTR",
-            prices=[LabeledPrice(label=tariff["label"], amount=final_amount)],
-        )
-        await send_and_log(
-            context.bot,
-            uid,
-            (
-                f"🧾 Инвойс на тариф <b>{html_escape(tariff['label'])}</b> отправлен."
-                f"{discount_text}\n\nПосле оплаты подписка активируется автоматически."
-            ),
-            username=uname,
-            parse_mode=ParseMode.HTML,
-            reply_markup=_build_billing_keyboard(),
-        )
-    except Exception as exc:
-        await send_critical_alert(
-            context.bot,
-            app.db,
-            error_type="BILLING_INVOICE_SEND_FAILED",
-            error_text=str(exc),
-            user_id=uid,
-            username=uname,
-            context="send_invoice",
-            extra={
-                "plan_key": key,
-                "stars_base": base_amount,
-                "stars_final": final_amount,
-                "discount_credit_id": discount_credit_id,
-            },
-        )
-        await send_and_log(
-            context.bot,
-            uid,
-            "❌ Не удалось выставить счёт. Попробуйте ещё раз через минуту.",
-            username=uname,
-            reply_markup=_build_billing_keyboard(),
-        )
 
 
 def _next_local_run(hour: int, minute: int, tz_name: str) -> datetime:
@@ -640,10 +276,6 @@ async def _build_daily_report_text(app: "App") -> str:
         "SELECT COUNT(*) FROM critical_alert_events WHERE last_seen_at >= ? AND last_seen_at < ?",
         (start_utc, end_utc),
     )
-    active_subs_row = await app.db.fetchone(
-        "SELECT COUNT(*) FROM subscriptions WHERE status='active'"
-    )
-
     top_deleters = await app.db.fetchall(
         """
         SELECT owner_id, COUNT(*) AS cnt
@@ -725,8 +357,6 @@ async def _build_daily_report_text(app: "App") -> str:
     total_messages = int(total_messages_row[0]) if total_messages_row else 0
     total_deleted = int(total_deleted_row[0]) if total_deleted_row else 0
     total_errors = int(total_errors_row[0]) if total_errors_row else 0
-    active_subs = int(active_subs_row[0]) if active_subs_row else 0
-
     analysis_bits: List[str] = []
     if total_errors > 0:
         analysis_bits.append("есть критичные ошибки, приоритет — стабилизация авторизации и сетевых запросов")
@@ -742,8 +372,7 @@ async def _build_daily_report_text(app: "App") -> str:
         f"<b>Сводка:</b>\n"
         f"• Сообщений за день: <b>{total_messages}</b>\n"
         f"• Удалений за день: <b>{total_deleted}</b>\n"
-        f"• Критичных ошибок: <b>{total_errors}</b>\n"
-        f"• Активных подписок: <b>{active_subs}</b>\n\n"
+        f"• Критичных ошибок: <b>{total_errors}</b>\n\n"
         f"<b>Кто больше всех удалял:</b>\n{deleters_lines}\n\n"
         f"<b>Самые активные пользователи:</b>\n{active_lines}\n\n"
         f"<b>Топ ошибок:</b>\n{error_lines}\n\n"
@@ -790,27 +419,6 @@ async def _daily_report_loop(application: Application) -> None:
                 )
             except Exception:
                 logger.debug("Failed to send critical alert for daily report failure", exc_info=True)
-
-
-async def _subscription_guard_loop(application: Application) -> None:
-    while True:
-        await asyncio.sleep(180)
-        if not CONFIG.billing_enabled:
-            continue
-        app: Optional[App] = application.bot_data.get("app")
-        if app is None:
-            continue
-        try:
-            expired_users = await expire_outdated_subscriptions(app.db)
-            if not expired_users:
-                continue
-            for uid in expired_users:
-                try:
-                    await app.watcher_service.stop(uid)
-                except Exception:
-                    logger.debug("Failed to stop watcher for expired uid=%s", uid, exc_info=True)
-        except Exception:
-            logger.exception("Subscription guard loop failed")
 
 
 async def register_and_notify_new_user(update: Update, context: ContextTypes.DEFAULT_TYPE, db: Database) -> bool:
@@ -887,47 +495,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_frontend_incoming(uid, uname, text="/start", meta="cmd=/start")
     is_new = await register_and_notify_new_user(update, context, app.db)
 
-    start_payload = ""
-    if update.message and update.message.text:
-        parts = update.message.text.split(maxsplit=1)
-        start_payload = parts[1].strip() if len(parts) > 1 else ""
-    referrer_uid = parse_referral_start_payload(start_payload)
-    if referrer_uid and int(referrer_uid) != int(uid):
-        try:
-            await register_referral_attribution(
-                app.db,
-                referrer_user_id=int(referrer_uid),
-                referred_user_id=int(uid),
-                start_payload=start_payload,
-            )
-        except Exception:
-            logger.debug(
-                "Failed to register referral attribution uid=%s referrer=%s",
-                uid,
-                referrer_uid,
-                exc_info=True,
-            )
-
-    if not await _ensure_subscription_or_notify(app, context, uid, uname=uname, send_notice=False):
-        status_text = await _build_subscription_status_text(app, uid)
-        tariff_lines = "\n".join(
-            f"• {item['label']} — <b>{item['stars']} ⭐</b>"
-            for item in get_subscription_tariffs()
-        )
-        await send_and_log(
-            context.bot,
-            uid,
-            f"{status_text}\n\n<b>Тарифы {SUBSCRIPTION_PRODUCT_NAME}:</b>\n{tariff_lines}\n\n"
-            "● Сохранение одноразовых медиа\n"
-            "● Никаких лимитов и ограничений",
-            username=uname,
-            parse_mode=ParseMode.HTML,
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-
     kb = build_start_keyboard()
-    status_text = await _build_subscription_status_text(app, uid)
     if is_new:
         m = await send_and_log(
             context.bot,
@@ -1132,8 +700,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uname = update.effective_user.username if update.effective_user else None
 
     log_frontend_incoming(uid, uname, text="/stats", meta="cmd=/stats")
-    if not await _ensure_subscription_or_notify(app, context, uid, uname=uname):
-        return
 
     stats = await app.db.get_stats(uid)
 
@@ -1159,57 +725,6 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML)
 
 
-async def plans_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user:
-        return
-    app: App = context.bot_data.get("app")
-    if not app:
-        return
-    uid = update.effective_user.id
-    uname = update.effective_user.username if update.effective_user else None
-
-    log_frontend_incoming(uid, uname, text="/plans", meta="cmd=/plans")
-
-    status_text = await _build_subscription_status_text(app, uid)
-    tariff_lines = "\n".join(
-        f"• {item['label']} — <b>{item['stars']} ⭐</b>"
-        for item in get_subscription_tariffs()
-    )
-    await send_and_log(
-        context.bot,
-        uid,
-        f"{status_text}\n\n<b>Тарифы {SUBSCRIPTION_PRODUCT_NAME}:</b>\n{tariff_lines}\n\n"
-        "● Сохранение одноразовых медиа\n"
-        "● Никаких лимитов и ограничений\n\n"
-        "🎁 <b>Реферальная программа:</b> /ref",
-        username=uname,
-        parse_mode=ParseMode.HTML,
-        reply_markup=_build_billing_keyboard(),
-    )
-
-
-async def myplan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user:
-        return
-    app: App = context.bot_data.get("app")
-    if not app:
-        return
-    uid = update.effective_user.id
-    uname = update.effective_user.username if update.effective_user else None
-
-    log_frontend_incoming(uid, uname, text="/myplan", meta="cmd=/myplan")
-
-    status_text = await _build_subscription_status_text(app, uid)
-    await send_and_log(
-        context.bot,
-        uid,
-        status_text,
-        username=uname,
-        parse_mode=ParseMode.HTML,
-        reply_markup=_build_billing_keyboard(),
-    )
-
-
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user:
         return
@@ -1218,21 +733,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app: App = context.bot_data.get("app")
     log_frontend_incoming(uid, uname, text="/help", meta="cmd=/help")
 
-    support_contact = str(getattr(CONFIG, "pay_support_contact", "") or "").strip()
-    support_line = f"• Поддержка оплаты: <code>{html_escape(support_contact)}</code>" if support_contact else "• Поддержка оплаты: /paysupport"
-    status_line = ""
-    if app is not None:
-        status_line = f"\n• Статус доступа: <b>{'активен' if await is_user_subscription_active(app.db, uid) else 'требуется Plus'}</b>"
-
     text = (
         "<b>Справка SavedBot</b>\n\n"
         "• /start — главное меню\n"
         "• /stats — статистика\n"
         "• /set — настройки\n"
-        "• /plans — подписка\n"
-        "• /logout — выйти\n"
-        f"{support_line}"
-        f"{status_line}"
+        "• /profile — профиль\n"
+        "• /logout — выйти\n\n"
+        "<b>Доступ:</b> все функции открыты без подписки, тарифов и лимитов."
     )
     await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML, reply_markup=build_start_keyboard())
 
@@ -1246,8 +754,6 @@ async def set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(update.effective_user.id)
     uname = update.effective_user.username if update.effective_user else None
     log_frontend_incoming(uid, uname, text="/set", meta="cmd=/set")
-    if not await _ensure_subscription_or_notify(app, context, uid, uname=uname):
-        return
 
     first_name = html_escape(update.effective_user.first_name or "друг")
     text = (
@@ -1306,46 +812,15 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             joined_date_text = first_seen_iso[:10] if len(first_seen_iso) >= 10 else first_seen_iso
 
-    sub = await ensure_free_trial_subscription(app.db, uid)
-    has_active_sub = is_subscription_dict_active(sub)
-    days_left = 0
-    expires_text = "—"
-    if has_active_sub:
-        expires_raw = str(sub.get("expires_at") or "")
-        expires_text = format_subscription_until(expires_raw, app.config.tz_name)
-        try:
-            exp_dt = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-            if exp_dt.tzinfo is None:
-                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-            seconds_left = max(0, int((exp_dt.astimezone(timezone.utc) - now_utc).total_seconds()))
-            days_left = max(1, (seconds_left + 86399) // 86400) if seconds_left > 0 else 0
-        except Exception:
-            days_left = 0
-
-    referral_stats = await get_referral_stats(app.db, uid)
-    referral_link = await _build_referral_link(context, uid)
-    referral_display = html_escape(referral_link) if referral_link else "временно недоступна"
-
     display_username = stored_username or uname or "—"
     display_username_view = f"@{display_username}" if display_username != "—" else "—"
-    plan_label = get_plan_label(str(sub.get("plan_key") or "1m")) if sub else "—"
-    sub_status = "активна" if has_active_sub else "неактивна"
     text = (
         "👤 <b>Профиль</b>\n\n"
         f"• Username: {html_escape(display_username_view)}\n"
         f"• ID: <code>{uid}</code>\n"
         f"• С нами с: <b>{html_escape(joined_date_text)}</b>\n"
-        f"• Дней с сервисом: <b>{days_with_us}</b>\n\n"
-        f"<b>{SUBSCRIPTION_PRODUCT_NAME}</b>\n"
-        f"• Статус: <b>{sub_status}</b>\n"
-        f"• Тариф: <b>{html_escape(plan_label)}</b>\n"
-        f"• Осталось дней: <b>{days_left}</b>\n"
-        f"• Действует до: <b>{html_escape(expires_text)}</b>\n\n"
-        "<b>Реферальная программа</b>\n"
-        f"• Приглашено: <b>{int(referral_stats.get('invited_total', 0))}</b>\n"
-        f"• Конверсий в оплату: <b>{int(referral_stats.get('converted_total', 0))}</b>\n"
-        f"• Активных скидок 10%: <b>{int(referral_stats.get('active_discounts', 0))}</b>\n"
-        f"• Ваша ссылка: <code>{referral_display}</code>"
+        f"• Дней с сервисом: <b>{days_with_us}</b>\n"
+        "• Доступ: <b>все функции открыты без подписки и лимитов</b>"
     )
     await send_and_log(
         context.bot,
@@ -1353,171 +828,8 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text,
         username=uname,
         parse_mode=ParseMode.HTML,
-        reply_markup=_build_billing_keyboard(),
+        reply_markup=build_start_keyboard(),
     )
-
-
-async def ref_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user:
-        return
-    app: App = context.bot_data.get("app")
-    if not app:
-        return
-    uid = int(update.effective_user.id)
-    uname = update.effective_user.username if update.effective_user else None
-    log_frontend_incoming(uid, uname, text="/ref", meta="cmd=/ref")
-
-    text = await _build_referral_program_text(app, context, uid)
-    await send_and_log(
-        context.bot,
-        uid,
-        text,
-        username=uname,
-        parse_mode=ParseMode.HTML,
-        reply_markup=_build_billing_keyboard(),
-    )
-
-
-async def terms_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user:
-        return
-    uid = update.effective_user.id
-    uname = update.effective_user.username if update.effective_user else None
-    app: App = context.bot_data.get("app")
-
-    log_frontend_incoming(uid, uname, text="/terms", meta="cmd=/terms")
-
-    terms_link = str(getattr(CONFIG, "terms_url", "") or "").strip()
-    terms_line = f"\n\nПолный текст: {html_escape(terms_link)}" if terms_link else ""
-    text = (
-        "📄 <b>Условия платной подписки</b>\n\n"
-        f"• Подписка {SUBSCRIPTION_PRODUCT_NAME} открывает доступ к функциям бота на выбранный срок.\n"
-        "• Тарифы: 1 месяц — 99⭐, 3 месяца — 249⭐, 12 месяцев — 799⭐.\n"
-        "• Для новых пользователей доступен бесплатный full trial на 2 дня.\n"
-        "• Продление добавляется к текущему активному сроку.\n"
-        "• Подписка привязывается к вашему Telegram user_id.\n"
-        "• После истечения срока доступ к платным разделам ограничивается до продления.\n"
-        "• Реферальная программа: годовой тариф у приглашённого = +1 месяц вам; тариф 1/3 месяца = скидка 10% вам.\n"
-        "• При технических вопросах по оплате используйте /paysupport."
-        f"{terms_line}"
-    )
-    await send_and_log(
-        context.bot,
-        uid,
-        text,
-        username=uname,
-        parse_mode=ParseMode.HTML,
-        reply_markup=_build_billing_keyboard() if app else None,
-    )
-
-
-async def paysupport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user:
-        return
-    uid = update.effective_user.id
-    uname = update.effective_user.username if update.effective_user else None
-    log_frontend_incoming(uid, uname, text="/paysupport", meta="cmd=/paysupport")
-
-    support_contact = str(getattr(CONFIG, "pay_support_contact", "") or "").strip()
-    if support_contact:
-        support_line = f"Контакт: <code>{html_escape(support_contact)}</code>"
-    elif CONFIG.admin_ids:
-        support_line = "Контакт администратора: " + ", ".join(f"<code>{int(x)}</code>" for x in CONFIG.admin_ids)
-    else:
-        support_line = "Контакт поддержки сейчас недоступен. Попробуйте позже."
-
-    text = (
-        "💬 <b>Поддержка по оплате</b>\n\n"
-        "Если оплата прошла, но подписка не активировалась, отправьте:\n"
-        "• ваш Telegram user_id\n"
-        "• время оплаты\n"
-        "• скрин успешной оплаты\n"
-        "• по возможности telegram_payment_charge_id\n\n"
-        f"{support_line}"
-    )
-    await send_and_log(
-        context.bot,
-        uid,
-        text,
-        username=uname,
-        parse_mode=ParseMode.HTML,
-    )
-
-
-async def subdiag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user:
-        return
-    uid = int(user.id)
-    uname = user.username
-    app: App = context.bot_data.get("app")
-    if app is None:
-        return
-
-    log_frontend_incoming(uid, uname, text="/subdiag", meta="cmd=/subdiag")
-    if uid not in CONFIG.admin_ids:
-        await send_and_log(context.bot, uid, "❌ Команда доступна только администраторам.", username=uname)
-        return
-
-    now_utc = datetime.now(timezone.utc)
-    now_iso = now_utc.isoformat()
-    day_ago_iso = (now_utc - timedelta(days=1)).isoformat()
-    next_day_iso = (now_utc + timedelta(days=1)).isoformat()
-    week_ago_iso = (now_utc - timedelta(days=7)).isoformat()
-
-    active_row = await app.db.fetchone("SELECT COUNT(*) FROM subscriptions WHERE status='active'")
-    expiring_row = await app.db.fetchone(
-        "SELECT COUNT(*) FROM subscriptions WHERE status='active' AND expires_at > ? AND expires_at <= ?",
-        (now_iso, next_day_iso),
-    )
-    paid_24h_row = await app.db.fetchone(
-        "SELECT COUNT(*) FROM subscription_payments WHERE paid_at >= ?",
-        (day_ago_iso,),
-    )
-    billing_errors_row = await app.db.fetchone(
-        "SELECT COUNT(*) FROM critical_alert_events WHERE last_seen_at >= ? AND error_type LIKE 'BILLING_%'",
-        (week_ago_iso,),
-    )
-
-    recent_payments = await app.db.fetchall(
-        """
-        SELECT p.user_id, p.plan_key, p.stars_paid, p.paid_at, p.expires_after, p.telegram_payment_charge_id, b.username
-        FROM subscription_payments p
-        LEFT JOIN bot_users b ON b.user_id = p.user_id
-        ORDER BY p.id DESC
-        LIMIT 10
-        """
-    )
-
-    recent_lines: List[str] = []
-    for row in recent_payments or []:
-        row_user_id = int(row["user_id"] if hasattr(row, "keys") else row[0])
-        row_plan = str(row["plan_key"] if hasattr(row, "keys") else row[1])
-        row_stars = int(row["stars_paid"] if hasattr(row, "keys") else row[2])
-        row_paid_at = str(row["paid_at"] if hasattr(row, "keys") else row[3])
-        row_expires = str(row["expires_after"] if hasattr(row, "keys") else row[4])
-        row_charge = str(row["telegram_payment_charge_id"] if hasattr(row, "keys") else row[5])
-        row_username = str((row["username"] if hasattr(row, "keys") else row[6]) or "").strip()
-        who = f"<code>{row_user_id}</code>" + (f" (@{html_escape(row_username)})" if row_username else "")
-        paid_at_text = format_subscription_until(row_paid_at, app.config.tz_name)
-        expires_text = format_subscription_until(row_expires, app.config.tz_name)
-        charge_tail = html_escape(row_charge[-12:]) if row_charge else "—"
-        recent_lines.append(
-            f"• {who}: {html_escape(get_plan_label(row_plan))}, {row_stars}⭐, {paid_at_text} → {expires_text}, charge …{charge_tail}"
-        )
-    if not recent_lines:
-        recent_lines.append("• Нет оплат")
-
-    text = (
-        "🛠 <b>Диагностика подписок</b>\n\n"
-        f"• Активных подписок: <b>{int(active_row[0]) if active_row else 0}</b>\n"
-        f"• Истекают в ближайшие 24ч: <b>{int(expiring_row[0]) if expiring_row else 0}</b>\n"
-        f"• Оплат за 24ч: <b>{int(paid_24h_row[0]) if paid_24h_row else 0}</b>\n"
-        f"• Billing-ошибок за 7 дней: <b>{int(billing_errors_row[0]) if billing_errors_row else 0}</b>\n\n"
-        "<b>Последние оплаты:</b>\n"
-        f"{chr(10).join(recent_lines)}"
-    )
-    await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML)
 
 
 async def unmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1530,8 +842,6 @@ async def unmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uname = update.effective_user.username if update.effective_user else None
 
     log_frontend_incoming(uid, uname, text="/unmute", meta="cmd=/unmute")
-    if not await _ensure_subscription_or_notify(app, context, uid, uname=uname):
-        return
 
     row = await app.db.fetchone("SELECT COUNT(*) FROM muted_chats WHERE owner_id=?", (uid,))
     count = int(row[0]) if row and row[0] is not None else 0
@@ -1596,9 +906,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app: App = context.bot_data.get("app")
     if not app:
         logger.debug("text_handler: app missing in bot_data")
-        return
-
-    if not await _ensure_subscription_or_notify(app, context, uid, uname=uname):
         return
 
     text = (update.message.text or "").strip()
@@ -2421,21 +1728,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
 
     await query.answer()
 
-    if data.startswith("set_"):
-        allowed = await _ensure_subscription_or_notify(app, context, uid, uname=uname, send_notice=False)
-        if not allowed:
-            status_text = await _build_subscription_status_text(app, uid)
-            await _update_auth_message(
-                context.bot,
-                app,
-                uid,
-                uname,
-                status_text,
-                message_id=getattr(query.message, "message_id", None),
-                reply_markup=_build_billing_keyboard(),
-            )
-            return
-
     if data == "start_advantages":
         await _update_auth_message(
             context.bot,
@@ -2501,44 +1793,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
         )
         return
 
-    if data == "set_referral":
-        ref_text = await _build_referral_program_text(app, context, uid)
-        await _update_auth_message(
-            context.bot,
-            app,
-            uid,
-            uname,
-            ref_text,
-            message_id=getattr(query.message, "message_id", None),
-            reply_markup=_build_set_back_keyboard(),
-        )
-        return
-
-    if data == "set_plus":
-        status_text = await _build_subscription_status_text(app, uid)
-        tariff_lines = "\n".join(
-            f"• {item['label']} — <b>{item['stars']} ⭐</b>"
-            for item in get_subscription_tariffs()
-        )
-        plus_text = (
-            f"{status_text}\n\n"
-            f"<b>{SUBSCRIPTION_PRODUCT_NAME}</b>\n"
-            "• архив удалённых и изменённых сообщений\n"
-            "• медиа и одноразовые файлы\n"
-            "• Mini App без ограничений\n\n"
-            f"<b>Тарифы:</b>\n{tariff_lines}"
-        )
-        await _update_auth_message(
-            context.bot,
-            app,
-            uid,
-            uname,
-            plus_text,
-            message_id=getattr(query.message, "message_id", None),
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-
     if data == "set_help":
         await _update_auth_message(
             context.bot,
@@ -2585,41 +1839,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
         )
         return
 
-    if data in {"billing_open", "billing_status"}:
-        status_text = await _build_subscription_status_text(app, uid)
-        tariff_lines = "\n".join(
-            f"• {item['label']} — <b>{item['stars']} ⭐</b>"
-            for item in get_subscription_tariffs()
-        )
-        await _update_auth_message(
-            context.bot,
-            app,
-            uid,
-            uname,
-            f"{status_text}\n\n<b>Тарифы {SUBSCRIPTION_PRODUCT_NAME}:</b>\n{tariff_lines}",
-            message_id=getattr(query.message, "message_id", None),
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-
-    if data == "billing_referral_info":
-        ref_text = await _build_referral_program_text(app, context, uid)
-        await _update_auth_message(
-            context.bot,
-            app,
-            uid,
-            uname,
-            ref_text,
-            message_id=getattr(query.message, "message_id", None),
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-
-    if data.startswith("billing_buy:"):
-        plan_key = str(data.split(":", 1)[1] or "").strip().lower()
-        await _send_plan_invoice(app, context, uid, plan_key, uname=uname)
-        return
-
     if data == "stats":
         await stats_cmd(update, context)
         return
@@ -2639,21 +1858,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
                 f"Попробуйте снова через <b>{wait_sec} сек.</b>."
             )
             await send_and_log(context.bot, uid, msg_text, username=uname, parse_mode=ParseMode.HTML)
-            return
-
-    if data in {"auth_phone", "auth_qr"} or data.startswith("auth_resend_code:") or data.startswith("mute_chat:"):
-        allowed = await _ensure_subscription_or_notify(app, context, uid, uname=uname, send_notice=False)
-        if not allowed:
-            status_text = await _build_subscription_status_text(app, uid)
-            await _update_auth_message(
-                context.bot,
-                app,
-                uid,
-                uname,
-                status_text,
-                message_id=getattr(query.message, "message_id", None),
-                reply_markup=_build_billing_keyboard(),
-            )
             return
 
     if data == "auth_phone":
@@ -2947,262 +2151,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
         return
 
 
-async def _handle_successful_payment_message(native_message: AiogramMessage, application: Application) -> None:
-    context = application.build_context()
-    app: Optional[App] = context.bot_data.get("app")
-    if app is None:
-        return
-    payment = getattr(native_message, "successful_payment", None)
-    if payment is None:
-        return
-    user = getattr(native_message, "from_user", None)
-    uid = int(getattr(user, "id", 0) or 0)
-    uname = getattr(user, "username", None)
-    payload_info = _parse_invoice_payload(getattr(payment, "invoice_payload", ""))
-    plan_key = str(payload_info.get("plan_key") or "")
-    payload_uid = payload_info.get("uid")
-    payload_final_amount = payload_info.get("final_amount")
-    discount_credit_id = int(payload_info.get("discount_credit_id") or 0)
-    if not uid or not plan_key or payload_uid is None:
-        await send_critical_alert(
-            context.bot,
-            app.db,
-            error_type="BILLING_PAYMENT_PAYLOAD_INVALID",
-            error_text=f"Unexpected invoice payload: {getattr(payment, 'invoice_payload', '')}",
-            user_id=uid or None,
-            username=uname,
-            context="successful_payment",
-        )
-        await send_and_log(
-            context.bot,
-            uid,
-            "⚠️ Платёж получен, но не удалось определить тариф. Напишите администратору.",
-            username=uname,
-        )
-        return
-    if payload_uid != uid:
-        await send_critical_alert(
-            context.bot,
-            app.db,
-            error_type="BILLING_PAYMENT_USER_MISMATCH",
-            error_text=f"payload_uid={payload_uid}, message_uid={uid}",
-            user_id=uid,
-            username=uname,
-            context="successful_payment",
-            extra={"invoice_payload": getattr(payment, "invoice_payload", "")},
-        )
-        await send_and_log(
-            context.bot,
-            uid,
-            "⚠️ Платёж отклонён: не совпал пользователь в платёжных данных.",
-            username=uname,
-        )
-        return
-    charge_id = str(getattr(payment, "telegram_payment_charge_id", "") or "").strip()
-    if charge_id:
-        dup = await app.db.fetchone(
-            "SELECT id FROM subscription_payments WHERE telegram_payment_charge_id=? LIMIT 1",
-            (charge_id,),
-        )
-        if dup:
-            await send_and_log(
-                context.bot,
-                uid,
-                "ℹ️ Этот платёж уже обработан. Подписка остается активной.",
-            username=uname,
-            reply_markup=_build_billing_keyboard(),
-        )
-        return
-    stars_paid = int(getattr(payment, "total_amount", 0) or get_plan_price_stars(plan_key))
-    if payload_final_amount is not None and int(payload_final_amount) != stars_paid:
-        await send_critical_alert(
-            context.bot,
-            app.db,
-            error_type="BILLING_PAYMENT_AMOUNT_MISMATCH",
-            error_text=f"payload_amount={payload_final_amount}, paid={stars_paid}",
-            user_id=uid,
-            username=uname,
-            context="successful_payment.amount_mismatch",
-            extra={"plan_key": plan_key},
-        )
-
-    sub = await activate_user_subscription(
-        app.db,
-        user_id=uid,
-        plan_key=plan_key,
-        stars_paid=stars_paid,
-        payload=str(getattr(payment, "invoice_payload", "") or ""),
-        telegram_payment_charge_id=charge_id,
-        provider_payment_charge_id=getattr(payment, "provider_payment_charge_id", None),
-        raw_payment_json=json.dumps(
-            payment.model_dump(mode="json") if hasattr(payment, "model_dump") else {},
-            ensure_ascii=False,
-            default=str,
-        ),
-    )
-    if discount_credit_id > 0 and charge_id:
-        try:
-            credit = await get_discount_credit_by_id(app.db, discount_credit_id, user_id=uid)
-            if credit and str(credit.get("status") or "") == "active":
-                await mark_discount_credit_used(
-                    app.db,
-                    credit_id=discount_credit_id,
-                    payment_charge_id=charge_id,
-                )
-        except Exception:
-            logger.debug("Failed to mark discount credit as used uid=%s credit=%s", uid, discount_credit_id, exc_info=True)
-
-    reward = {}
-    try:
-        reward = await process_referral_reward_on_payment(
-            app.db,
-            buyer_user_id=uid,
-            plan_key=plan_key,
-            payment_charge_id=charge_id,
-        )
-    except Exception:
-        logger.debug("Failed to process referral reward for buyer=%s", uid, exc_info=True)
-
-    expires_text = format_subscription_until(sub.get("expires_at"), app.config.tz_name)
-    await send_and_log(
-        context.bot,
-        uid,
-        (
-            "✅ <b>Оплата получена</b>\n\n"
-            f"Тариф {html_escape(SUBSCRIPTION_PRODUCT_NAME)}: <b>{html_escape(get_plan_label(plan_key))}</b>\n"
-            f"Доступ активен до: <b>{html_escape(expires_text)}</b>\n\n"
-            "Можно продолжать использовать все функции бота."
-        ),
-        username=uname,
-        parse_mode=ParseMode.HTML,
-        reply_markup=build_start_keyboard(),
-    )
-
-    if reward:
-        referrer_uid = int(reward.get("referrer_user_id") or 0)
-        reward_type = str(reward.get("reward_type") or "")
-        if referrer_uid > 0 and referrer_uid != uid:
-            if reward_type == "gift_1m":
-                ref_sub = await get_user_subscription(app.db, referrer_uid)
-                ref_expires = format_subscription_until(ref_sub.get("expires_at"), app.config.tz_name)
-                await send_and_log(
-                    context.bot,
-                    referrer_uid,
-                    (
-                        "🎉 <b>Реферальный бонус начислен</b>\n\n"
-                        "Приглашённый пользователь купил годовую подписку.\n"
-                        "Вам добавлен <b>1 месяц подписки</b>.\n"
-                        f"Новый срок действия: <b>{html_escape(ref_expires)}</b>."
-                    ),
-                    parse_mode=ParseMode.HTML,
-                )
-            elif reward_type == "discount_10":
-                await send_and_log(
-                    context.bot,
-                    referrer_uid,
-                    (
-                        "🎉 <b>Реферальный бонус начислен</b>\n\n"
-                        "Приглашённый пользователь купил подписку.\n"
-                        "Для вас активирована <b>скидка 10%</b> на следующую покупку тарифа."
-                    ),
-                    parse_mode=ParseMode.HTML,
-                )
-
-
-async def _dispatch_pre_checkout(native_query: AiogramPreCheckoutQuery, application: Application) -> None:
-    context = application.build_context()
-    app: Optional[App] = context.bot_data.get("app")
-    uid = int(getattr(native_query.from_user, "id", 0) or 0)
-    uname = getattr(native_query.from_user, "username", None)
-
-    async def _deny(message: str, *, reason: str) -> None:
-        try:
-            await application.bot.answer_pre_checkout_query(
-                pre_checkout_query_id=native_query.id,
-                ok=False,
-                error_message=message,
-            )
-        finally:
-            if app is not None:
-                await send_critical_alert(
-                    context.bot,
-                    app.db,
-                    error_type="BILLING_PRECHECKOUT_DENIED",
-                    error_text=reason,
-                    user_id=uid or None,
-                    username=uname,
-                    context="pre_checkout",
-                    extra={
-                        "payload": getattr(native_query, "invoice_payload", ""),
-                        "amount": int(getattr(native_query, "total_amount", 0) or 0),
-                    },
-                    cooldown_sec=60,
-                )
-
-    if app is None:
-        await _deny("Сервис перезапускается, попробуйте через минуту.", reason="app_missing")
-        return
-    if not CONFIG.billing_enabled:
-        await _deny("Оплата сейчас недоступна.", reason="billing_disabled")
-        return
-
-    payload_info = _parse_invoice_payload(getattr(native_query, "invoice_payload", ""))
-    plan_key = str(payload_info.get("plan_key") or "")
-    payload_uid = payload_info.get("uid")
-    payload_final_amount = payload_info.get("final_amount")
-    discount_credit_id = int(payload_info.get("discount_credit_id") or 0)
-    if not plan_key or payload_uid is None:
-        await _deny("Некорректные данные оплаты.", reason="invalid_payload")
-        return
-    if payload_uid != uid:
-        await _deny("Платёжные данные не совпали.", reason=f"payload_uid={payload_uid},uid={uid}")
-        return
-    expected_amount = int(get_plan_price_stars(plan_key))
-    if discount_credit_id > 0:
-        credit = await get_discount_credit_by_id(app.db, discount_credit_id, user_id=uid)
-        if not credit:
-            await _deny("Скидка недействительна. Откройте тариф заново.", reason=f"discount_missing:{discount_credit_id}")
-            return
-        if str(credit.get("status") or "") != "active":
-            await _deny("Скидка уже использована. Откройте тариф заново.", reason=f"discount_status:{credit.get('status')}")
-            return
-        expires_dt = None
-        expires_raw = str(credit.get("expires_at") or "").strip()
-        if expires_raw:
-            try:
-                expires_dt = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-                if expires_dt.tzinfo is None:
-                    expires_dt = expires_dt.replace(tzinfo=timezone.utc)
-                expires_dt = expires_dt.astimezone(timezone.utc)
-            except Exception:
-                expires_dt = None
-        if expires_dt and expires_dt <= datetime.now(timezone.utc):
-            await _deny("Срок скидки истёк. Откройте тариф заново.", reason="discount_expired")
-            return
-        percent = int(credit.get("percent_off") or REFERRAL_DISCOUNT_PERCENT)
-        expected_amount = apply_percent_discount(expected_amount, percent)
-
-    if payload_final_amount is not None and int(payload_final_amount) != expected_amount:
-        await _deny(
-            "Сумма оплаты изменилась, откройте тариф заново.",
-            reason=f"payload_amount_mismatch expected={expected_amount},payload={payload_final_amount}",
-        )
-        return
-
-    total_amount = int(getattr(native_query, "total_amount", 0) or 0)
-    if expected_amount != total_amount:
-        await _deny(
-            "Сумма оплаты изменилась, откройте тариф заново.",
-            reason=f"amount_mismatch expected={expected_amount}, got={total_amount}",
-        )
-        return
-
-    await application.bot.answer_pre_checkout_query(
-        pre_checkout_query_id=native_query.id,
-        ok=True,
-    )
-
-
 # ----------------------------
 # Main loop / bootstrap
 # ----------------------------
@@ -3235,7 +2183,7 @@ async def post_init(application: Application):
     ai_center_module.BOT_RUNTIME_APP = app
     ai_center_module.BOT_RUNTIME_LOOP = asyncio.get_running_loop()
     await app.start()
-    # Prime bot username cache once on startup for stable referral links.
+    # Prime bot username cache once on startup.
     try:
         me = await application.native_bot.get_me()
         bot_username = str(getattr(me, "username", "") or "").strip().lstrip("@")
@@ -3253,10 +2201,7 @@ async def post_init(application: Application):
             [
                 BotCommand(command="start", description="Запуск и подключение бота"),
                 BotCommand(command="set", description="Центр управления"),
-                BotCommand(command="profile", description="Профиль и подписка"),
-                BotCommand(command="ref", description="Реферальная программа"),
-                BotCommand(command="plans", description="Тарифы SavedBot Plus"),
-                BotCommand(command="myplan", description="Текущий тариф"),
+                BotCommand(command="profile", description="Профиль"),
                 BotCommand(command="stats", description="Статистика архива"),
                 BotCommand(command="help", description="Справка по функциям"),
                 BotCommand(command="logout", description="Завершить сессию"),
@@ -3294,23 +2239,13 @@ async def post_init(application: Application):
     daily_task = application.bot_data.get("daily_report_task")
     if daily_task is None or daily_task.done():
         application.bot_data["daily_report_task"] = asyncio.create_task(_daily_report_loop(application))
-    sub_guard_task = application.bot_data.get("subscription_guard_task")
-    if sub_guard_task is None or sub_guard_task.done():
-        application.bot_data["subscription_guard_task"] = asyncio.create_task(_subscription_guard_loop(application))
 COMMAND_HANDLERS = {
     "/start": start_cmd,
     "/help": help_cmd,
     "/set": set_cmd,
     "/profile": profile_cmd,
-    "/ref": ref_cmd,
     "/logout": logout_cmd,
     "/stats": stats_cmd,
-    "/plans": plans_cmd,
-    "/myplan": myplan_cmd,
-    "/subscribe": plans_cmd,
-    "/terms": terms_cmd,
-    "/paysupport": paysupport_cmd,
-    "/subdiag": subdiag_cmd,
     "/unmute": unmute_cmd,
     "/cleansessions": cleansessions_cmd,
     "/sessions_health": sessions_health_cmd,
@@ -3331,10 +2266,6 @@ async def _dispatch_message(native_message: AiogramMessage, application: Applica
     update = Update.from_message(native_message, application.bot)
     context = application.build_context()
     try:
-        if getattr(native_message, "successful_payment", None) is not None:
-            await _handle_successful_payment_message(native_message, application)
-            return
-
         is_blocked = await access_guard(update, context)
         if is_blocked:
             return
@@ -3376,10 +2307,6 @@ async def run_bot() -> None:
     async def _callback_entrypoint(query: AiogramCallbackQuery) -> None:
         await _dispatch_callback(query, application)
 
-    @router.pre_checkout_query()
-    async def _pre_checkout_entrypoint(pre_checkout_query: AiogramPreCheckoutQuery) -> None:
-        await _dispatch_pre_checkout(pre_checkout_query, application)
-
     dispatcher.include_router(router)
 
     await post_init(application)
@@ -3392,10 +2319,10 @@ async def run_bot() -> None:
         await dispatcher.start_polling(
             application.native_bot,
             handle_as_tasks=True,
-            allowed_updates=["message", "callback_query", "pre_checkout_query"],
+            allowed_updates=["message", "callback_query"],
         )
     finally:
-        for key in ("daily_report_task", "subscription_guard_task"):
+        for key in ("daily_report_task",):
             task = application.bot_data.get(key)
             if task and not task.done():
                 task.cancel()
