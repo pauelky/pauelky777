@@ -2,8 +2,6 @@ from .shared import *
 from .events_core import *
 from .state import *
 from .runtime import *
-from .ai_center import *
-from . import ai_center as ai_center_module
 from aiogram import Dispatcher, Router
 from aiogram.types import CallbackQuery as AiogramCallbackQuery
 from aiogram.types import Message as AiogramMessage
@@ -130,17 +128,6 @@ def build_start_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("Подключить по QR", callback_data="auth_qr"),
         ],
     ]
-    ai_url = ""
-    try:
-        ai_url = str(AI_WEBAPP_URL or "").strip()
-    except Exception:
-        ai_url = ""
-
-    if ai_url.startswith("https://"):
-        rows.append([InlineKeyboardButton("Открыть архив", web_app=WebAppInfo(url=ai_url))])
-    else:
-        rows.append([InlineKeyboardButton("Открыть архив", callback_data="start_open_archive")])
-
     return InlineKeyboardMarkup(rows)
 
 
@@ -205,7 +192,7 @@ def _start_advantages_text() -> str:
         "• сохранять удалённые сообщения\n"
         "• сохранять изменения текста\n"
         "• хранить медиа и одноразовые файлы\n"
-        "• показывать всё в Mini App"
+        "• показывать статистику архива"
     )
 
 
@@ -543,7 +530,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             "<b>SavedBot подключен.</b>\n\n"
             "Архив работает в фоне.\n"
-            "Можно открыть статистику или Mini App.\n\n"
+            "Можно открыть статистику архива.\n\n"
             f"{_build_marker_line()}"
         )
 
@@ -579,7 +566,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Что умею:\n"
         "• сохраняю удалённые и изменённые сообщения\n"
         "• храню медиа и историю правок\n"
-        "• показываю архив в Mini App\n\n"
+        "• показываю статистику архива\n\n"
         "Выберите способ подключения ниже.\n\n"
         f"{_build_marker_line()}"
     )
@@ -1451,7 +1438,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             wait_sec = (e.seconds if hasattr(e, 'seconds') else 60) + 10
             log_auth_attempt(uid, uname, code_raw, state, result=f"FloodWait_{wait_sec}")
             await app.auth.cleanup_tmp(uid)
-            msg = f"⏳ <b>Telegram ограничил попытки входа.</b>\nПовторите через <b>{wait_sec} сек.</b>"
+            msg = f"⏳ <b>Telegram просит подождать перед следующей попыткой входа.</b>\nПовторите через <b>{wait_sec} сек.</b>"
             await send_and_log(context.bot, uid, msg, username=uname, parse_mode=ParseMode.HTML)
             await set_state(app.db, uid, AuthState.IDLE, resend_allowed_at=time.time() + wait_sec)
             logger.warning("[AUTH] FloodWait on sign_in for %s: %ds", uid, wait_sec)
@@ -1745,33 +1732,6 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
             message_id=getattr(query.message, "message_id", None),
             reply_markup=build_start_keyboard(),
         )
-        return
-
-    if data == "start_open_archive":
-        ai_url = str(AI_WEBAPP_URL or "").strip()
-        if ai_url.startswith("https://"):
-            await _update_auth_message(
-                context.bot,
-                app,
-                uid,
-                uname,
-                "📂 <b>Архив готов к запуску</b>\n\nОткройте Mini App кнопкой «Открыть архив».",
-                message_id=getattr(query.message, "message_id", None),
-                reply_markup=build_start_keyboard(),
-            )
-        else:
-            await _update_auth_message(
-                context.bot,
-                app,
-                uid,
-                uname,
-                (
-                    "⚠️ <b>Mini App пока не подключён к публичному HTTPS URL</b>\n\n"
-                    "Укажите production URL в <code>AI_WEBAPP_URL</code> и перезапустите сервис."
-                ),
-                message_id=getattr(query.message, "message_id", None),
-                reply_markup=build_start_keyboard(),
-            )
         return
 
     if data == "set_root":
@@ -2202,8 +2162,6 @@ async def post_init(application: Application):
     """Create App, connect DB, start event workers, restore watchers."""
     app = App(CONFIG, application)
     application.bot_data["app"] = app
-    ai_center_module.BOT_RUNTIME_APP = app
-    ai_center_module.BOT_RUNTIME_LOOP = asyncio.get_running_loop()
     await app.start()
     # Prime bot username cache once on startup.
     try:
@@ -2334,7 +2292,6 @@ async def run_bot() -> None:
     await post_init(application)
     app = application.bot_data.get("app")
 
-    start_ai_daemon()
     logger.info("Starting aiogram polling...")
 
     try:

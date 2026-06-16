@@ -478,7 +478,7 @@ class WatcherService:
         backfill_batches: int = 4,
     ) -> None:
         chat_id = getattr(dialog, "id", None)
-        if chat_id is None or not self.event_handler.is_chat_allowed(chat_id):
+        if chat_id is None:
             return
 
         entity = getattr(dialog, "entity", None)

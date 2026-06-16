@@ -17,7 +17,6 @@ from aiogram.types import (
     InlineKeyboardButton as AiogramInlineKeyboardButton,
     InlineKeyboardMarkup as AiogramInlineKeyboardMarkup,
     Message as AiogramMessage,
-    WebAppInfo as AiogramWebAppInfo,
 )
 
 
@@ -87,26 +86,16 @@ def _normalize_text(value: Any) -> str:
 
 
 @dataclass(slots=True)
-class WebAppInfo:
-    url: str
-
-    def to_aiogram(self) -> AiogramWebAppInfo:
-        return AiogramWebAppInfo(url=self.url)
-
-
-@dataclass(slots=True)
 class InlineKeyboardButton:
     text: str
     callback_data: Optional[str] = None
     url: Optional[str] = None
-    web_app: Optional[WebAppInfo] = None
 
     def to_aiogram(self) -> AiogramInlineKeyboardButton:
         return AiogramInlineKeyboardButton(
             text=_normalize_text(self.text),
             callback_data=self.callback_data,
             url=self.url,
-            web_app=self.web_app.to_aiogram() if self.web_app else None,
         )
 
 

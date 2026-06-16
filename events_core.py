@@ -778,14 +778,6 @@ class EventHandler:
         self._disappearing_task = self._delete_task = None
         await self.aggregator.stop_workers()
 
-    def is_chat_allowed(self, chat_id: Optional[int]) -> bool:
-        if chat_id is None:
-            return False
-        allowed = self.config.allowed_chat_ids_set
-        if allowed is None:
-            return True
-        return chat_id in allowed
-
     def _dialog_kind_from_entity(self, entity: Any, sender: Any = None) -> str:
         if entity is None:
             return "unknown"
@@ -1544,7 +1536,7 @@ class EventHandler:
                 chat_id = utils.get_peer_id(chat)
             except Exception:
                 chat_id = getattr(chat, "id", None)
-        if chat_id is None or not self.is_chat_allowed(chat_id):
+        if chat_id is None:
             return False
 
         sender = getattr(msg, "sender", None)
@@ -1794,7 +1786,7 @@ class EventHandler:
 
     async def handle_new(self, owner_id: int, event: events.NewMessage.Event) -> None:
         chat_id = event.chat_id
-        if chat_id is None or not self.is_chat_allowed(chat_id):
+        if chat_id is None:
             return
         if await self.db.fetchone("SELECT 1 FROM muted_chats WHERE owner_id=? AND chat_id=?", (owner_id, chat_id)):
             return
@@ -2093,7 +2085,7 @@ class EventHandler:
 
     async def handle_edited(self, owner_id: int, event: events.MessageEdited.Event) -> None:
         chat_id = event.chat_id
-        if not self.is_chat_allowed(chat_id):
+        if chat_id is None:
             return
         if await self.is_muted_chat(owner_id, chat_id):
             return
@@ -2307,10 +2299,6 @@ class EventHandler:
         """
         event_chat_id = getattr(event, "chat_id", None)
         
-        # Проверка разрешённых чатов
-        if event_chat_id is not None and not self.is_chat_allowed(event_chat_id):
-            return
-            
         deleted_ids = set(event.deleted_ids or [])
         if not deleted_ids:
             return
@@ -2656,12 +2644,6 @@ class EventHandler:
                     except Exception as e:
                         logger.error("Failed to queue delete event for owner %s msg %d: %s",
                                     owner_id, msg_id, e)
-
-                # === STEP 8: Очистить старые записи ===
-                try:
-                    await self.db.clean_old_records(owner_id)
-                except Exception as e:
-                    logger.debug("Failed to clean old records for owner %s: %s", owner_id, e)
 
                 processed_count += 1
 

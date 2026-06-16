@@ -1,11 +1,9 @@
 from __future__ import annotations
 import asyncio
 import calendar
-import base64
 import glob
 import hashlib
 import html
-import aiofiles          # pip install aiofiles
 import io
 import json
 import logging
@@ -25,17 +23,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, TYPE_CHECKING
-from functools import lru_cache
-from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock as ThreadingLock
-from urllib.parse import urlparse
-import httpx
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel, Field
 
 import aiosqlite
 import importlib
@@ -77,17 +66,10 @@ from .aiogram_compat import (
     RetryAfter,
     TimedOut,
     Update,
-    WebAppInfo,
 )
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from telethon.tl import functions, types
 from telethon import utils
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 # Optional dotenv
 try:
     from dotenv import load_dotenv
@@ -148,11 +130,8 @@ class Config:
     send_code_retry_delay: float = 2.0
 
     executor_workers: int = 6
-    max_deleted_ids: int = 150
-    max_group_details: int = 20
 
     tz_name: str = "Europe/Moscow"
-    allowed_chat_ids: Optional[Tuple[int, ...]] = None
     alert_chat_id: Optional[int] = None
     bot_username: str = ""
 
@@ -166,12 +145,6 @@ class Config:
                 self.tz_name,
             )
             return timezone.utc
-
-    @property
-    def allowed_chat_ids_set(self) -> Optional[set[int]]:
-        if self.allowed_chat_ids is None:
-            return None
-        return set(self.allowed_chat_ids)
 
     @staticmethod
     def from_env() -> "Config":
@@ -198,15 +171,6 @@ class Config:
         LOGS_DIR = os.path.join(BASE_DIR, "logs")
         DB_PATH = os.path.join(SESSIONS_DIR, "bot_database.sqlite")
 
-        allowed_raw = os.getenv("ALLOWED_CHAT_IDS", "") or os.getenv("ALLOWED_CHAT_IDS_LIST", "")
-        allowed = None
-        if allowed_raw:
-            parts = [p.strip() for p in re.split(r"[,\s]+", allowed_raw) if p.strip()]
-            try:
-                allowed = tuple(int(x) for x in parts)
-            except Exception:
-                allowed = None
-
         bot_username = str(os.getenv("BOT_USERNAME", "") or "").strip().lstrip("@")
 
         alert_chat_id_raw = str(os.getenv("ALERT_CHAT_ID", "") or "").strip()
@@ -228,7 +192,6 @@ class Config:
             logs_dir=LOGS_DIR,
             db_path=DB_PATH,
             tz_name=os.getenv("TIMEZONE", "Europe/Moscow"),
-            allowed_chat_ids=allowed,
             alert_chat_id=alert_chat_id,
             bot_username=bot_username,
         )
@@ -244,15 +207,8 @@ logging.getLogger("telethon").setLevel(_resolve_log_level("TELETHON_LOG_LEVEL", 
 logging.getLogger("telethon.network").setLevel(
     _resolve_log_level("TELETHON_NETWORK_LOG_LEVEL", logging.WARNING)
 )
-logging.getLogger("httpx").setLevel(_resolve_log_level("HTTPX_LOG_LEVEL", logging.WARNING))
 
 logger = logging.getLogger("bot_main")
-
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "arcee-ai/trinity-large-preview:free")
-OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-if not OPENROUTER_API_KEY:
-    logger.warning("OPENROUTER_API_KEY is not set; AI assistant endpoints will return errors until configured.")
 
 try:
     CONFIG = Config.from_env()
@@ -263,12 +219,16 @@ except Exception as exc:
 for p in (CONFIG.sessions_dir, CONFIG.media_dir, CONFIG.logs_dir):
     Path(p).mkdir(parents=True, exist_ok=True)
 
+
+def html_escape(s: Optional[str]) -> str:
+    return html.escape(str(s or ""), quote=True)
+
 welcome_message = (
     "<b>Привет! Я SavedBot.</b>\n\n"
     "Кратко, что я умею:\n"
     "• сохраняет удалённые и изменённые сообщения\n"
     "• хранит одноразовые медиа и историю правок\n"
-    "• показывает архив в Mini App\n"
+    "• показывает статистику архива\n"
     "• помогает быстро найти нужный чат или файл\n\n"
     "Выберите способ подключения ниже."
 )
@@ -1901,21 +1861,6 @@ class Database:
             "top_chats": rows_chats,
             "last": last_row,
         }
-
-    async def clean_old_records(self, owner_id: int):
-
-        await self.execute(
-            """
-            DELETE FROM deleted_messages
-            WHERE owner_id=? AND id NOT IN (
-                SELECT id FROM deleted_messages
-                WHERE owner_id=?
-                ORDER BY id DESC
-                LIMIT ?
-            )
-            """,
-            (owner_id, owner_id, self.config.max_deleted_ids),
-        )
 
     async def fetchone_with_retry(self, query: str, params: Tuple = (), attempts: int = 25, delay: float = 0.07):
         """

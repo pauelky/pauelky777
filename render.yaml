@@ -1,23 +1,15 @@
 services:
-  - type: web
+  - type: worker
     name: savedbot
     runtime: docker
-    plan: starter
     autoDeploy: true
-    healthCheckPath: /health
     disk:
       name: savedbot-data
       mountPath: /data
       sizeGB: 10
     envVars:
-      - key: PORT
-        value: "8000"
       - key: BASE_DIR
         value: /data
-      - key: AI_APP_HOST
-        value: 0.0.0.0
-      - key: AI_APP_PORT
-        value: "8000"
       - key: TIMEZONE
         value: Europe/Moscow
       - key: TG_API_ID
@@ -29,8 +21,6 @@ services:
       - key: ADMIN_IDS
         sync: false
       - key: BOT_USERNAME
-        sync: false
-      - key: OPENROUTER_API_KEY
         sync: false
       - key: ALERT_CHAT_ID
         sync: false
