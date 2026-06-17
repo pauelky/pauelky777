@@ -4,6 +4,17 @@ import sqlite3
 from PIL import Image, ImageOps, ImageDraw, ImageFont, ImageStat
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.getenv(name, str(default)) or default))
+    except Exception:
+        return default
+
+
+DELETE_EVENT_SEND_GAP_SECONDS = _float_env("DELETE_EVENT_SEND_GAP_SECONDS", 1.4)
+DELETE_EVENT_PART_GAP_SECONDS = _float_env("DELETE_EVENT_PART_GAP_SECONDS", 0.35)
+
+
 def _short_text(value: Any, max_len: int) -> str:
     text = repair_mojibake(value or "").replace("\x00", "").strip()
     if max_len <= 0:
@@ -101,6 +112,8 @@ class DeleteAggregator:
         self._stopping = False
         self._avatar_cache: Dict[Tuple[int, str], Tuple[float, Optional[Tuple[bytes, str]]]] = {}
         self._avatar_cache_ttl = 15 * 60.0
+        self._owner_send_locks: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._owner_event_seq: Dict[int, int] = defaultdict(int)
 
     async def start_workers(self) -> None:
         if self._workers_tasks:
@@ -152,19 +165,23 @@ class DeleteAggregator:
             except asyncio.CancelledError:
                 break
             try:
-                await self._send_single_with_retry(owner_id, payload)
-            except Exception:
-                try:
-                    logger.exception("DeleteAggregator worker failed to send payload")
-                except Exception:
-                    pass
+                owner_lock = self._owner_send_locks[owner_id]
+                async with owner_lock:
+                    try:
+                        await self._send_single_with_retry(owner_id, payload)
+                    except Exception:
+                        try:
+                            logger.exception("DeleteAggregator worker failed to send payload")
+                        except Exception:
+                            pass
+                    finally:
+                        try:
+                            # Keep delivery smooth per owner and prevent bursts on mass deletions.
+                            if not self._stopping:
+                                await asyncio.sleep(DELETE_EVENT_SEND_GAP_SECONDS)
+                        except Exception:
+                            pass
             finally:
-                try:
-                    # Keep delivery smooth and prevent message bursts on mass deletions.
-                    if not self._stopping:
-                        await asyncio.sleep(1.0)
-                except Exception:
-                    pass
                 try:
                     self.send_queue.task_done()
                 except Exception:
@@ -175,6 +192,10 @@ class DeleteAggregator:
                 self.send_queue.task_done()
             except Exception:
                 break
+
+    def _next_event_sequence(self, owner_id: int) -> int:
+        self._owner_event_seq[owner_id] += 1
+        return int(self._owner_event_seq[owner_id])
 
     async def _send_single_with_retry(self, owner_id: int, payload: Dict[str, Any], *, max_attempts: int = 6):
         """
@@ -605,13 +626,18 @@ class DeleteAggregator:
         sender_label_plain = f"@{sender}" if sender and not str(sender).startswith("ID ") else (sender or "неизвестно")
 
         event_meta = {
-            "deleted": ("🗑️", "удалил сообщение"),
-            "edited": ("✏️", "отредактировал сообщение"),
-            "disappearing": ("👻", "удалил исчезающее сообщение"),
-            "story": ("📸", "сохранил историю"),
+            "deleted": ("🗑️", "удалённое сообщение", "удалил сообщение"),
+            "edited": ("✏️", "изменённое сообщение", "отредактировал сообщение"),
+            "disappearing": ("👻", "исчезающее сообщение", "удалил исчезающее сообщение"),
+            "story": ("📸", "сохранённая история", "сохранил историю"),
         }
-        event_icon, event_action = event_meta.get(event_type, ("ℹ️", "сохранил сообщение"))
+        event_icon, event_title, event_action = event_meta.get(event_type, ("ℹ️", "сохранённое событие", "сохранил сообщение"))
+        event_seq = self._next_event_sequence(owner_id)
+        divider = "━━━━━━━━━━━━━━━━━━━━"
         meta_lines: List[str] = [
+            divider,
+            f"{event_icon} <b>SavedBot Archive · {event_title} #{event_seq}</b>",
+            "",
             f"{event_icon} {sender_link} <b>{event_action}</b>",
             f"💬 <b>Чат:</b> {chat_link}",
             f"🕒 <b>Время события:</b> {ts_orig}",
@@ -631,6 +657,7 @@ class DeleteAggregator:
             meta_lines.append(f"👁️ <b>Просмотров:</b> {views}")
         if event_type == "deleted" and reactions_display:
             meta_lines.append(f"❤️ <b>Реакции:</b> {reactions_display}")
+        meta_lines.append(divider)
 
         meta_text = "\n".join(meta_lines)
 
@@ -638,7 +665,7 @@ class DeleteAggregator:
         if event_type in {"deleted", "edited"} and chat_id is not None:
             try:
                 mute_markup = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔇 Заглушить чат", callback_data=f"mute_chat:{int(chat_id)}")
+                    InlineKeyboardButton("🔇 Больше не присылать этот чат", callback_data=f"mute_chat:{int(chat_id)}")
                 ]])
             except Exception:
                 pass
@@ -676,7 +703,7 @@ class DeleteAggregator:
         details_text = "\n".join(details_parts).strip()
 
         if details_text:
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(DELETE_EVENT_PART_GAP_SECONDS)
             if len(details_text) <= 3800:
                 last_message = await self.bot.send_message(
                     chat_id=owner_id,
@@ -709,7 +736,7 @@ class DeleteAggregator:
                         pass
 
         if media_path and os.path.exists(media_path):
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(DELETE_EVENT_PART_GAP_SECONDS)
             ext = os.path.splitext(media_path)[1].lower()
             ctype = (content_type or "").lower()
             bio: Optional[io.BytesIO] = None

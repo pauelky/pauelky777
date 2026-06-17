@@ -123,9 +123,10 @@ def _auth_expires_at(ttl_sec: int) -> float:
 
 def build_start_keyboard() -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton("📱 Подключить аккаунт по номеру телефона", callback_data="auth_phone")],
+        [InlineKeyboardButton("🗝 Подключить аккаунт по QR-коду", callback_data="auth_qr")],
         [
-            InlineKeyboardButton("Подключить по номеру", callback_data="auth_phone"),
-            InlineKeyboardButton("Подключить по QR", callback_data="auth_qr"),
+            InlineKeyboardButton("✨ Посмотреть возможности SavedBot", callback_data="start_advantages"),
         ],
     ]
     return InlineKeyboardMarkup(rows)
@@ -138,15 +139,23 @@ def _build_marker_line() -> str:
 def _build_set_root_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("👤 Профиль", callback_data="set_profile")],
-            [InlineKeyboardButton("🎚 Настройки прослушивания", callback_data="set_listen_menu")],
-            [InlineKeyboardButton("✨ Чем мы отличаемся", callback_data="set_help")],
+            [InlineKeyboardButton("👤 Открыть профиль и статус доступа", callback_data="set_profile")],
+            [InlineKeyboardButton("🎚 Настроить прослушивание чатов", callback_data="set_listen_menu")],
+            [InlineKeyboardButton("📊 Посмотреть статистику архива", callback_data="stats_panel")],
+            [InlineKeyboardButton("🔔 Вернуть уведомления из заглушённых чатов", callback_data="unmute_all")],
+            [InlineKeyboardButton("✨ Что умеет SavedBot и чем он полезен", callback_data="set_help")],
+            [InlineKeyboardButton("🧭 Вернуться в центр управления", callback_data="main_menu")],
         ]
     )
 
 
 def _build_set_back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="set_root")]])
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("⬅️ Вернуться к настройкам бота", callback_data="set_root")],
+            [InlineKeyboardButton("🧭 Открыть центр управления", callback_data="main_menu")],
+        ]
+    )
 
 
 def _listen_label(settings: Dict[str, int], key: str, title: str) -> str:
@@ -157,13 +166,105 @@ def _listen_label(settings: Dict[str, int], key: str, title: str) -> str:
 def _build_listen_settings_keyboard(settings: Dict[str, int]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(_listen_label(settings, "allow_private", "Личные чаты (1/1)"), callback_data="set_listen_toggle:allow_private")],
-            [InlineKeyboardButton(_listen_label(settings, "allow_groups", "Группы"), callback_data="set_listen_toggle:allow_groups")],
-            [InlineKeyboardButton(_listen_label(settings, "allow_supergroups", "Супергруппы"), callback_data="set_listen_toggle:allow_supergroups")],
-            [InlineKeyboardButton(_listen_label(settings, "allow_channels", "Каналы"), callback_data="set_listen_toggle:allow_channels")],
-            [InlineKeyboardButton(_listen_label(settings, "allow_bots", "Боты"), callback_data="set_listen_toggle:allow_bots")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="set_root")],
+            [InlineKeyboardButton(_listen_label(settings, "allow_private", "Сохранять личные чаты один-на-один"), callback_data="set_listen_toggle:allow_private")],
+            [InlineKeyboardButton(_listen_label(settings, "allow_groups", "Сохранять сообщения из групп"), callback_data="set_listen_toggle:allow_groups")],
+            [InlineKeyboardButton(_listen_label(settings, "allow_supergroups", "Сохранять сообщения из супергрупп"), callback_data="set_listen_toggle:allow_supergroups")],
+            [InlineKeyboardButton(_listen_label(settings, "allow_channels", "Сохранять публикации из каналов"), callback_data="set_listen_toggle:allow_channels")],
+            [InlineKeyboardButton(_listen_label(settings, "allow_bots", "Сохранять сообщения от ботов"), callback_data="set_listen_toggle:allow_bots")],
+            [InlineKeyboardButton("⬅️ Вернуться к настройкам бота", callback_data="set_root")],
         ]
+    )
+
+
+def _build_main_menu_keyboard(*, session_valid: bool) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = []
+    if not session_valid:
+        rows.extend(
+            [
+                [InlineKeyboardButton("📱 Подключить аккаунт по номеру телефона", callback_data="auth_phone")],
+                [InlineKeyboardButton("🗝 Подключить аккаунт по QR-коду", callback_data="auth_qr")],
+            ]
+        )
+
+    rows.extend(
+        [
+            [InlineKeyboardButton("⚙️ Открыть настройки бота", callback_data="set_root")],
+            [
+                InlineKeyboardButton("📊 Статистика архива", callback_data="stats_panel"),
+                InlineKeyboardButton("👤 Профиль", callback_data="set_profile"),
+            ],
+            [InlineKeyboardButton("🎚 Настроить прослушивание чатов", callback_data="set_listen_menu")],
+            [InlineKeyboardButton("📖 Показать полный список команд", callback_data="main_help")],
+            [InlineKeyboardButton("🔔 Вернуть заглушённые чаты", callback_data="unmute_all")],
+        ]
+    )
+    if session_valid:
+        rows.append([InlineKeyboardButton("🚪 Отключить текущую сессию", callback_data="logout_confirm")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_connected_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("📊 Посмотреть статистику архива", callback_data="stats_panel"),
+                InlineKeyboardButton("⚙️ Открыть настройки бота", callback_data="set_root"),
+            ],
+            [InlineKeyboardButton("🧭 Открыть центр управления", callback_data="main_menu")],
+        ]
+    )
+
+
+def _build_logout_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Да, отключить текущую сессию", callback_data="logout_execute")],
+            [InlineKeyboardButton("⬅️ Оставить всё как есть", callback_data="main_menu")],
+        ]
+    )
+
+
+def _build_command_center_text(first_name: str, *, session_valid: bool) -> str:
+    status = "подключён, архив работает в фоне" if session_valid else "ожидает подключения аккаунта"
+    return (
+        f"🧭 <b>Центр управления SavedBot для {first_name}</b>\n\n"
+        f"Статус: <b>{status}</b>.\n"
+        "Все основные действия доступны кнопками ниже.\n\n"
+        "<b>Полный набор команд:</b>\n"
+        "• /start — приветствие и центр управления\n"
+        "• /set — настройки бота и типов чатов\n"
+        "• /stats — статистика сохранённого архива\n"
+        "• /profile — профиль, ID и статус доступа\n"
+        "• /help — справка по возможностям\n"
+        "• /unmute — вернуть уведомления из заглушённых чатов\n"
+        "• /logout — отключить текущую сессию\n\n"
+        "Настройки, статистика и профиль открываются без ввода команд — через inline-кнопки."
+    )
+
+
+def _build_settings_menu_text(first_name: str) -> str:
+    return (
+        f"⚙️ <b>Настройки SavedBot для {first_name}</b>\n\n"
+        "Здесь можно управлять профилем, статистикой, типами чатов и уведомлениями.\n"
+        "Выберите нужный раздел — изменения применяются сразу."
+    )
+
+
+def _build_help_text() -> str:
+    return (
+        "📖 <b>Справка SavedBot</b>\n\n"
+        "<b>Что сохраняется:</b>\n"
+        "• удалённые сообщения и медиа\n"
+        "• правки текста с версией «до» и «после»\n"
+        "• одноразовые вложения, документы, голосовые и кружочки\n\n"
+        "<b>Команды:</b>\n"
+        "• /start — приветствие и центр управления\n"
+        "• /set — настройки бота\n"
+        "• /stats — статистика архива\n"
+        "• /profile — профиль пользователя\n"
+        "• /unmute — снять заглушки со всех чатов\n"
+        "• /logout — отключить сессию\n\n"
+        "Основной сценарий лучше вести кнопками: так меньше ручного ввода и меньше риска ошибиться."
     )
 
 
@@ -188,11 +289,13 @@ async def _get_bot_username(context: ContextTypes.DEFAULT_TYPE) -> str:
 
 def _start_advantages_text() -> str:
     return (
-        "<b>SavedBot умеет:</b>\n\n"
-        "• сохранять удалённые сообщения\n"
-        "• сохранять изменения текста\n"
-        "• хранить медиа и одноразовые файлы\n"
-        "• показывать статистику архива"
+        "✨ <b>Почему SavedBot удобен</b>\n\n"
+        "• показывает удалённое сообщение отдельной аккуратной карточкой\n"
+        "• отделяет текст, медиа и служебную информацию, чтобы не было каши\n"
+        "• сохраняет историю правок и подсвечивает, что именно изменилось\n"
+        "• позволяет заглушить шумный чат одной кнопкой\n"
+        "• даёт статистику по архиву и последним событиям\n\n"
+        "Главная идея простая: всё важное остаётся под рукой, а управление не требует лишних команд."
     )
 
 
@@ -230,6 +333,85 @@ async def _build_set_profile_text(app: "App", user: Any) -> str:
         f"• User ID: <code>{uid}</code>\n"
         f"• С нами с: <b>{html_escape(joined_text)}</b>\n"
         "• Доступ: <b>открыт</b>"
+    )
+
+
+async def _is_session_active(app: "App", uid: int) -> bool:
+    try:
+        if not app.storage.is_valid(uid):
+            return False
+    except Exception:
+        return False
+
+    try:
+        app.watcher_service.ensure(uid)
+    except Exception:
+        logger.debug("watcher_service.ensure failed uid=%s", uid)
+
+    try:
+        return bool(await app.storage.is_session_valid(uid))
+    except Exception:
+        logger.debug("session validation failed uid=%s", uid)
+        return False
+
+
+async def _disconnect_user_session(app: "App", uid: int) -> None:
+    try:
+        await app.watcher_service.stop(uid)
+    except Exception:
+        logger.debug("Failed to stop watcher during logout for uid=%s", uid)
+
+    try:
+        app.storage.delete(uid)
+    except Exception:
+        logger.debug("Failed to delete storage during logout for uid=%s", uid)
+
+    try:
+        await set_state(app.db, uid, AuthState.IDLE)
+    except Exception:
+        logger.debug("Failed to set auth state to IDLE for uid=%s", uid)
+
+
+async def _build_stats_text(app: "App", uid: int) -> str:
+    stats = await app.db.get_stats(uid)
+
+    last_txt = "—"
+    if stats.get("last"):
+        sender, date, ctype = stats["last"]
+        ts = format_human_timestamp(date, app.config.tz_name)
+        last_txt = f"{html_escape(ctype)} от {html_escape(sender or 'Unknown')} ({html_escape(ts)})"
+
+    top_text = "\n".join(
+        f" {idx}. {html_escape(title)} — <b>{cnt}</b>"
+        for idx, (title, cnt) in enumerate(stats.get("top_chats", []), 1)
+    ) or "Пока пусто"
+
+    return (
+        "📊 <b>Статистика архива SavedBot</b>\n\n"
+        f"Всего сохранено событий: <b>{stats.get('total', 0)}</b>\n"
+        f"Сохранено сегодня: <b>{stats.get('today', 0)}</b>\n\n"
+        f"<b>Топ чатов по сохранениям:</b>\n{top_text}\n\n"
+        f"<b>Последнее событие:</b> {last_txt}"
+    )
+
+
+async def _clear_muted_chats(app: "App", uid: int) -> int:
+    row = await app.db.fetchone("SELECT COUNT(*) FROM muted_chats WHERE owner_id=?", (uid,))
+    count = int(row[0]) if row and row[0] is not None else 0
+    await app.db.execute("DELETE FROM muted_chats WHERE owner_id=?", (uid,))
+    return count
+
+
+def _build_unmute_text(count: int) -> str:
+    if count == 0:
+        return (
+            "🔔 <b>Все уведомления уже активны</b>\n\n"
+            "Заглушённых чатов не найдено. Новые удалённые и отредактированные сообщения будут приходить как обычно."
+        )
+    return (
+        f"🔔 <b>Уведомления возвращены</b>\n\n"
+        f"Сняты заглушки с чатов: <b>{count}</b>.\n"
+        "Новые удалённые и отредактированные сообщения из них снова будут приходить сюда."
     )
 
 
@@ -487,25 +669,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_frontend_incoming(uid, uname, text="/start", meta="cmd=/start")
     is_new = await register_and_notify_new_user(update, context, app.db)
 
-    kb = build_start_keyboard()
-    if is_new:
-        m = await send_and_log(
-            context.bot,
-            uid,
-            f"{welcome_message}\n\n{_build_marker_line()}",
-            username=uname,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-
-        try:
-            if hasattr(app, "auth") and callable(getattr(app.auth, "track_auth_message", None)):
-                app.auth.track_auth_message(uid, m.message_id)
-        except Exception:
-            logger.debug("Failed to track welcome message uid=%s", uid)
-
-        return
-
     # ------------------------------------------------
     # SESSION CHECK
     # ------------------------------------------------
@@ -513,44 +676,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session_valid = False
 
     if app.storage.is_valid(uid):
+        session_valid = await _is_session_active(app, uid)
 
-        try:
-            app.watcher_service.ensure(uid)
-        except Exception:
-            logger.debug("watcher_service.ensure failed uid=%s", uid)
-
-        session_valid = await app.storage.is_session_valid(uid)
-
-    if session_valid:
-
-        kb_stats = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Статистика", callback_data="stats")]
-        ])
-
-        text = (
-            "<b>SavedBot подключен.</b>\n\n"
-            "Архив работает в фоне.\n"
-            "Можно открыть статистику архива.\n\n"
-            f"{_build_marker_line()}"
-        )
-
-        await send_and_log(
-            context.bot,
-            uid,
-            text,
-            username=uname,
-            reply_markup=kb_stats,
-            parse_mode=ParseMode.HTML
-        )
-
-        return
-
-    # ------------------------------------------------
-    # SESSION INVALID
-    # ------------------------------------------------
-
-    if app.storage.is_valid(uid):
-
+    if not session_valid and app.storage.is_valid(uid):
+        # Сессия могла устареть между запусками: чистим её и предлагаем подключиться заново.
         try:
             app.storage.delete(uid)
         except Exception:
@@ -561,30 +690,48 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.debug("watcher stop failed uid=%s", uid)
 
-    text = (
-        "<b>Привет! Я SavedBot.</b>\n\n"
-        "Что умею:\n"
-        "• сохраняю удалённые и изменённые сообщения\n"
-        "• храню медиа и историю правок\n"
-        "• показываю статистику архива\n\n"
-        "Выберите способ подключения ниже.\n\n"
-        f"{_build_marker_line()}"
-    )
+    if session_valid:
+        text = (
+            "✅ <b>SavedBot подключён и работает</b>\n\n"
+            "Архив уже слушает выбранные чаты в фоне.\n"
+            "Статистику, профиль и настройки можно открыть кнопками ниже.\n\n"
+            f"{_build_marker_line()}"
+        )
 
-    m = await send_and_log(
+        await send_and_log(
+            context.bot,
+            uid,
+            text,
+            username=uname,
+            reply_markup=_build_connected_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        m = await send_and_log(
+            context.bot,
+            uid,
+            f"{welcome_message}\n\n{_build_marker_line()}",
+            username=uname,
+            reply_markup=build_start_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+
+        try:
+            if hasattr(app, "auth") and callable(getattr(app.auth, "track_auth_message", None)):
+                app.auth.track_auth_message(uid, m.message_id)
+        except Exception:
+            log_context = "welcome" if is_new else "auth"
+            logger.debug("Failed to track %s message uid=%s", log_context, uid)
+
+    first_name = html_escape(user.first_name or "друг")
+    await send_and_log(
         context.bot,
         uid,
-        text,
+        _build_command_center_text(first_name, session_valid=session_valid),
         username=uname,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+        parse_mode=ParseMode.HTML,
     )
-
-    try:
-        if hasattr(app, "auth") and callable(getattr(app.auth, "track_auth_message", None)):
-            app.auth.track_auth_message(uid, m.message_id)
-    except Exception:
-        logger.debug("Failed to track auth message uid=%s", uid)
 
 async def cleansessions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -650,33 +797,13 @@ async def logout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     log_frontend_incoming(uid, uname, text="/logout", meta="cmd=/logout")
 
-    try:
-        await app.watcher_service.stop(uid)
-    except Exception:
-        logger.debug("Failed to stop watcher during logout for uid=%s", uid)
-
-    try:
-        app.storage.delete(uid)
-    except Exception:
-        logger.debug("Failed to delete storage during logout for uid=%s", uid)
-
-    try:
-        await set_state(app.db, uid, AuthState.IDLE)
-    except Exception:
-        logger.debug("Failed to set auth state to IDLE for uid=%s", uid)
-
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📱 Войти по номеру", callback_data="auth_phone"),
-            InlineKeyboardButton("🗝 Войти по QR", callback_data="auth_qr"),
-        ]
-    ])
+    await _disconnect_user_session(app, uid)
     text = (
-        "❎ <b>Вы вышли из аккаунта.</b>\n\n"
-        "Все данные сессии удалены. Для продолжения используйте один из способов входа ниже."
+        "❎ <b>Текущая сессия отключена</b>\n\n"
+        "SavedBot больше не слушает ваш аккаунт. Архивные записи остаются в базе, а для продолжения можно подключиться заново."
     )
 
-    m = await send_and_log(context.bot, uid, text, username=uname, reply_markup=kb, parse_mode=ParseMode.HTML)
+    m = await send_and_log(context.bot, uid, text, username=uname, reply_markup=build_start_keyboard(), parse_mode=ParseMode.HTML)
     try:
         if hasattr(app, "auth") and callable(getattr(app.auth, "track_auth_message", None)):
             app.auth.track_auth_message(uid, m.message_id)
@@ -695,28 +822,17 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     log_frontend_incoming(uid, uname, text="/stats", meta="cmd=/stats")
 
-    stats = await app.db.get_stats(uid)
+    text = await _build_stats_text(app, uid)
+    session_valid = await _is_session_active(app, uid)
 
-    last_txt = "—"
-    if stats.get('last'):
-        sender, date, ctype = stats['last']
-        ts = format_human_timestamp(date, app.config.tz_name)
-        last_txt = f"{ctype} от {sender or 'Unknown'} ({ts})"
-
-    top_text = "\n".join(
-        f" {idx}) {html_escape(title)} — <b>{cnt}</b>"
-        for idx, (title, cnt) in enumerate(stats.get('top_chats', []), 1)
-    ) or "Пока пусто"
-
-    text = (
-        f"📊 <b>Статистика</b>\n\n"
-        f"Всего сохранено: <b>{stats.get('total', 0)}</b>\n"
-        f"Сегодня: <b>{stats.get('today', 0)}</b>\n\n"
-        f"<b>Топ чатов:</b>\n{top_text}\n\n"
-        f"Последнее: {last_txt}"
+    await send_and_log(
+        context.bot,
+        uid,
+        text,
+        username=uname,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
     )
-
-    await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -727,16 +843,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app: App = context.bot_data.get("app")
     log_frontend_incoming(uid, uname, text="/help", meta="cmd=/help")
 
-    text = (
-        "<b>Справка SavedBot</b>\n\n"
-        "• /start — главное меню\n"
-        "• /stats — статистика\n"
-        "• /set — настройки\n"
-        "• /profile — профиль\n"
-        "• /logout — выйти\n\n"
-        "<b>Доступ:</b> все функции открыты."
+    session_valid = await _is_session_active(app, uid) if app else False
+    await send_and_log(
+        context.bot,
+        uid,
+        _build_help_text(),
+        username=uname,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
     )
-    await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML, reply_markup=build_start_keyboard())
 
 
 async def set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -750,14 +865,10 @@ async def set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_frontend_incoming(uid, uname, text="/set", meta="cmd=/set")
 
     first_name = html_escape(update.effective_user.first_name or "друг")
-    text = (
-        f"⚙️ <b>Привет, {first_name}. Вот настройки бота</b>\n\n"
-        "Выберите раздел ниже:"
-    )
     await send_and_log(
         context.bot,
         uid,
-        text,
+        _build_settings_menu_text(first_name),
         username=uname,
         parse_mode=ParseMode.HTML,
         reply_markup=_build_set_root_keyboard(),
@@ -776,53 +887,15 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uname = user.username
     log_frontend_incoming(uid, uname, text="/profile", meta="cmd=/profile")
 
-    profile_row = await app.db.fetchone(
-        "SELECT username, first_seen_at FROM bot_users WHERE user_id=? LIMIT 1",
-        (uid,),
-    )
-    stored_username = ""
-    first_seen_iso = ""
-    if profile_row:
-        stored_username = str((profile_row["username"] if hasattr(profile_row, "keys") else profile_row[0]) or "").strip()
-        first_seen_iso = str((profile_row["first_seen_at"] if hasattr(profile_row, "keys") else profile_row[1]) or "").strip()
-
-    now_utc = datetime.now(timezone.utc)
-    try:
-        tz = ZoneInfo(app.config.tz_name)
-    except Exception:
-        tz = timezone.utc
-    now_local = now_utc.astimezone(tz)
-
-    joined_date_text = "—"
-    days_with_us = 0
-    if first_seen_iso:
-        try:
-            joined_dt = datetime.fromisoformat(first_seen_iso.replace("Z", "+00:00"))
-            if joined_dt.tzinfo is None:
-                joined_dt = joined_dt.replace(tzinfo=timezone.utc)
-            joined_local = joined_dt.astimezone(tz)
-            joined_date_text = joined_local.strftime("%d.%m.%Y")
-            days_with_us = max(1, (now_local.date() - joined_local.date()).days + 1)
-        except Exception:
-            joined_date_text = first_seen_iso[:10] if len(first_seen_iso) >= 10 else first_seen_iso
-
-    display_username = stored_username or uname or "—"
-    display_username_view = f"@{display_username}" if display_username != "—" else "—"
-    text = (
-        "👤 <b>Профиль</b>\n\n"
-        f"• Username: {html_escape(display_username_view)}\n"
-        f"• ID: <code>{uid}</code>\n"
-        f"• С нами с: <b>{html_escape(joined_date_text)}</b>\n"
-        f"• Дней с сервисом: <b>{days_with_us}</b>\n"
-        "• Доступ: <b>все функции открыты</b>"
-    )
+    text = await _build_set_profile_text(app, user)
+    session_valid = await _is_session_active(app, uid)
     await send_and_log(
         context.bot,
         uid,
         text,
         username=uname,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_start_keyboard(),
+        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
     )
 
 
@@ -837,20 +910,16 @@ async def unmute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     log_frontend_incoming(uid, uname, text="/unmute", meta="cmd=/unmute")
 
-    row = await app.db.fetchone("SELECT COUNT(*) FROM muted_chats WHERE owner_id=?", (uid,))
-    count = int(row[0]) if row and row[0] is not None else 0
-
-    await app.db.execute("DELETE FROM muted_chats WHERE owner_id=?", (uid,))
-
-    if count == 0:
-        text = "ℹ️ У вас не было заглушённых чатов — всё уже активно."
-    else:
-        text = (
-            f"🔔 Сняты заглушки с <b>{count}</b> чатов.\n\n"
-            "Новые удалённые и отредактированные сообщения из них снова будут приходить сюда."
-        )
-
-    await send_and_log(context.bot, uid, text, username=uname, parse_mode=ParseMode.HTML)
+    count = await _clear_muted_chats(app, uid)
+    session_valid = await _is_session_active(app, uid)
+    await send_and_log(
+        context.bot,
+        uid,
+        _build_unmute_text(count),
+        username=uname,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+    )
 
 
 async def cleardb_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1722,6 +1791,92 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
 
     await query.answer()
 
+    if data == "main_menu":
+        session_valid = await _is_session_active(app, uid)
+        first_name = html_escape(query.from_user.first_name or "друг")
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            _build_command_center_text(first_name, session_valid=session_valid),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+        )
+        return
+
+    if data == "main_help":
+        session_valid = await _is_session_active(app, uid)
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            _build_help_text(),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+        )
+        return
+
+    if data in {"stats", "stats_panel"}:
+        session_valid = await _is_session_active(app, uid)
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            await _build_stats_text(app, uid),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+        )
+        return
+
+    if data == "unmute_all":
+        count = await _clear_muted_chats(app, uid)
+        session_valid = await _is_session_active(app, uid)
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            _build_unmute_text(count),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
+        )
+        return
+
+    if data == "logout_confirm":
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            (
+                "🚪 <b>Отключить текущую сессию?</b>\n\n"
+                "SavedBot перестанет слушать аккаунт до повторного подключения. "
+                "Уже сохранённые записи останутся в архиве."
+            ),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=_build_logout_confirm_keyboard(),
+        )
+        return
+
+    if data == "logout_execute":
+        await _disconnect_user_session(app, uid)
+        await _update_auth_message(
+            context.bot,
+            app,
+            uid,
+            uname,
+            (
+                "❎ <b>Текущая сессия отключена</b>\n\n"
+                "SavedBot больше не слушает аккаунт. Подключиться заново можно кнопками ниже."
+            ),
+            message_id=getattr(query.message, "message_id", None),
+            reply_markup=build_start_keyboard(),
+        )
+        return
+
     if data == "start_advantages":
         await _update_auth_message(
             context.bot,
@@ -1741,7 +1896,7 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
             app,
             uid,
             uname,
-            f"⚙️ <b>Привет, {first_name}. Вот настройки бота</b>\n\nВыберите раздел ниже:",
+            _build_settings_menu_text(first_name),
             message_id=getattr(query.message, "message_id", None),
             reply_markup=_build_set_root_keyboard(),
         )
@@ -1775,9 +1930,9 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
     if data == "set_listen_menu":
         settings = await get_user_chat_type_settings(app.db, uid)
         listen_text = (
-            "🎚 <b>Настройки прослушивания чатов</b>\n\n"
-            "Выберите типы чатов, которые бот должен слушать.\n"
-            "Изменения применяются сразу."
+            "🎚 <b>Какие чаты слушать и сохранять</b>\n\n"
+            "Включите только те источники, которые действительно нужны. "
+            "Изменения применяются сразу и влияют на новые события."
         )
         await _update_auth_message(
             context.bot,
@@ -1800,14 +1955,10 @@ async def callback_or_approval_handler(update: Update, context: ContextTypes.DEF
             app,
             uid,
             uname,
-            "🎚 <b>Настройки прослушивания чатов</b>\n\nИзменения применяются сразу.",
+            "🎚 <b>Какие чаты слушать и сохранять</b>\n\nИзменения применены. Можно переключить ещё один тип чатов или вернуться назад.",
             message_id=getattr(query.message, "message_id", None),
             reply_markup=_build_listen_settings_keyboard(updated),
         )
-        return
-
-    if data == "stats":
-        await stats_cmd(update, context)
         return
 
     info = await get_state(app.db, uid)
