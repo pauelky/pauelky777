@@ -1,4 +1,4 @@
-﻿"""
+"""
 Универсальный Telegram-бот: вопросы, фото, голос, изображения, погода и стили ответа.
 """
 import hashlib
@@ -16,7 +16,6 @@ import asyncio
 import subprocess
 import contextlib
 import time
-import re
 import urllib.parse
 from collections import deque
 from datetime import UTC, datetime, timedelta
@@ -66,9 +65,9 @@ except ImportError:
 
 if torch is not None:
     try:
-        print(torch.cuda.is_available())  # Should return True
+        logging.getLogger(__name__).debug("torch cuda available: %s", torch.cuda.is_available())
         if torch.cuda.is_available():
-            print(torch.cuda.get_device_name(0))  # Shows your GPU
+            logging.getLogger(__name__).debug("torch cuda device: %s", torch.cuda.get_device_name(0))
     except Exception:
         pass
 
@@ -1165,6 +1164,21 @@ def _normalize_model_id(model_id: str | None) -> str:
     return (model_id or "").strip()
 
 
+def _model_key(model_id: str | None) -> str:
+    return _normalize_model_id(model_id).lower()
+
+
+def _remember_attempted_model(attempted_models: set[str], model_id: str | None) -> None:
+    key = _model_key(model_id)
+    if key:
+        attempted_models.add(key)
+
+
+def _is_unattempted_model(model_id: str | None, attempted_models: set[str]) -> bool:
+    key = _model_key(model_id)
+    return bool(key and key not in attempted_models)
+
+
 def _is_excluded_fallback_model(model_id: str | None) -> bool:
     normalized = _normalize_model_id(model_id).lower()
     if not normalized:
@@ -1268,10 +1282,19 @@ def is_model_not_found_response(status_code: int | None, response_text: str | No
     return "no endpoints found" in normalized or '"code":404' in normalized
 
 
-def fallback_model_for_unavailable(preferred_model: str | None) -> str | None:
+def fallback_model_for_unavailable(
+    preferred_model: str | None,
+    task_type: str | None = None,
+    attempted_models: set[str] | None = None,
+) -> str | None:
     preferred = (preferred_model or "").strip()
-    for candidate in get_model_router_candidates("complex", requested_model=preferred):
-        if preferred and candidate.lower() == preferred.lower():
+    preferred_key = _model_key(preferred)
+    attempted = {_model_key(item) for item in (attempted_models or set()) if _model_key(item)}
+    for candidate in get_model_router_candidates(task_type or "complex", requested_model=preferred):
+        candidate_key = candidate.lower()
+        if preferred_key and candidate_key == preferred_key:
+            continue
+        if candidate_key in attempted:
             continue
         return candidate
     return None
@@ -1283,10 +1306,11 @@ def fallback_model_for_runtime_issue(
     attempted_models: set[str] | None = None,
 ) -> str | None:
     preferred = (preferred_model or "").strip()
-    attempted = {item.lower() for item in (attempted_models or set()) if item}
+    preferred_key = _model_key(preferred)
+    attempted = {_model_key(item) for item in (attempted_models or set()) if _model_key(item)}
     for candidate in get_model_router_candidates(task_type, requested_model=preferred):
         candidate_key = candidate.lower()
-        if preferred and candidate_key == preferred.lower():
+        if preferred_key and candidate_key == preferred_key:
             continue
         if candidate_key in attempted:
             continue
@@ -1328,6 +1352,37 @@ def clear_model_degraded_flag(model_id: str | None) -> None:
         return
     with _MODEL_DEGRADED_LOCK:
         _MODEL_DEGRADED_UNTIL.pop(normalized, None)
+
+
+def get_model_degraded_snapshot() -> dict[str, float]:
+    now = time.time()
+    snapshot: dict[str, float] = {}
+    with _MODEL_DEGRADED_LOCK:
+        for model_id, expires_at in list(_MODEL_DEGRADED_UNTIL.items()):
+            remaining = float(expires_at or 0.0) - now
+            if remaining <= 0:
+                _MODEL_DEGRADED_UNTIL.pop(model_id, None)
+                continue
+            snapshot[_model_key(model_id)] = remaining
+    return snapshot
+
+
+def format_model_candidates_preview(task_type: str, *, limit: int = 8) -> str:
+    candidates = get_model_router_candidates(task_type, include_degraded=True)
+    degraded = get_model_degraded_snapshot()
+    title = (task_type or "complex").upper()
+    lines = [f"<b>{html.escape(title)}</b>:"]
+    if not candidates:
+        lines.append("  - нет доступных кандидатов")
+        return "\n".join(lines)
+
+    for index, model_id in enumerate(candidates[:limit], start=1):
+        cooldown = degraded.get(_model_key(model_id))
+        suffix = f" (cooldown {int(cooldown)}s)" if cooldown else ""
+        lines.append(f"  {index}. <code>{html.escape(model_id)}</code>{suffix}")
+    if len(candidates) > limit:
+        lines.append(f"  ... ещё {len(candidates) - limit}")
+    return "\n".join(lines)
 
 
 def get_effective_model_for_request(preferred_model: str | None, task_type: str | None = None) -> str | None:
@@ -4653,6 +4708,7 @@ async def chat_with_openrouter(
     response_status_code: int | None = None
     request_started_at = _openrouter_runtime_request_started()
     reply = OPENROUTER_TEMPORARY_UNAVAILABLE_MESSAGE
+    attempted_model_keys: set[str] = set()
 
     try:
         # 4. Если внешняя очередь прогресса не передана — создаём собственный индикатор
@@ -4695,13 +4751,13 @@ async def chat_with_openrouter(
             logging.info("OpenRouter request path: model=%s key=%s timeout=%.1fs", model_id, key_label, request_timeout)
             return response
 
-        async def _request_with_runtime_fallback(client: httpx.AsyncClient, initial_model: str) -> tuple[httpx.Response, str]:
+        async def _request_with_runtime_fallback(client: httpx.AsyncClient, initial_model: str) -> tuple[httpx.Response, str, set[str]]:
             current_model = initial_model
             attempted_models: set[str] = set()
             fallback_started_at = time.perf_counter()
             attempt_index = 0
             while True:
-                attempted_models.add(current_model)
+                _remember_attempted_model(attempted_models, current_model)
                 request_timeout = get_attempt_request_timeout(
                     float(timeout),
                     task_type=task_type,
@@ -4718,7 +4774,7 @@ async def chat_with_openrouter(
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning(
                             "Model %s request failed (%s) after %.1fs, retrying with runtime fallback %s",
                             current_model,
@@ -4742,12 +4798,16 @@ async def chat_with_openrouter(
                 status_pre = getattr(response, "status_code", None)
                 text_pre = getattr(response, "text", "")[:2000]
                 if is_model_not_found_response(status_pre, text_pre) or is_empty_success_openrouter_response(response):
+                    mark_model_temporarily_degraded(
+                        current_model,
+                        f"unusable_response:{status_pre or 'empty'}",
+                    )
                     fallback_model = fallback_model_for_runtime_issue(
                         current_model,
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning("Model %s returned unusable response, retrying with %s", current_model, fallback_model)
                         if send_progress is not None:
                             with contextlib.suppress(Exception):
@@ -4762,7 +4822,7 @@ async def chat_with_openrouter(
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning("Model %s returned retryable status=%s, retrying with %s", current_model, status_pre, fallback_model)
                         if send_progress is not None:
                             with contextlib.suppress(Exception):
@@ -4770,7 +4830,7 @@ async def chat_with_openrouter(
                         current_model = fallback_model
                         attempt_index += 1
                         continue
-                return response, current_model
+                return response, current_model, attempted_models
 
         # 6. Основной запрос с семафором и ретраями
         async with OPENROUTER_SEMAPHORE:
@@ -4779,27 +4839,37 @@ async def chat_with_openrouter(
                     await send_progress(make_progress_payload("🧠 Думаю над ответом…"))
             if created_client:
                 async with async_client:
-                    resp, chosen_model = await _request_with_runtime_fallback(async_client, chosen_model)
+                    resp, chosen_model, attempted_model_keys = await _request_with_runtime_fallback(async_client, chosen_model)
                     status_pre = getattr(resp, "status_code", None)
                     text_pre = getattr(resp, "text", "")[:2000]
                     if is_model_not_found_response(status_pre, text_pre):
-                        fallback_model = fallback_model_for_unavailable(chosen_model)
+                        fallback_model = fallback_model_for_unavailable(
+                            chosen_model,
+                            task_type=task_type,
+                            attempted_models=attempted_model_keys,
+                        )
                         if fallback_model:
                             logging.warning("Model %s unavailable, retry with fallback %s", chosen_model, fallback_model)
                             chosen_model = fallback_model
+                            _remember_attempted_model(attempted_model_keys, chosen_model)
                             if send_progress is not None:
                                 with contextlib.suppress(Exception):
                                     await send_progress(make_progress_payload("🔁 Повторяю запрос другим маршрутом…"))
                             resp = await _request_once(async_client, chosen_model, request_timeout=max(OPENROUTER_MIN_FALLBACK_TIMEOUT, float(timeout)))
             else:
-                resp, chosen_model = await _request_with_runtime_fallback(async_client, chosen_model)
+                resp, chosen_model, attempted_model_keys = await _request_with_runtime_fallback(async_client, chosen_model)
                 status_pre = getattr(resp, "status_code", None)
                 text_pre = getattr(resp, "text", "")[:2000]
                 if is_model_not_found_response(status_pre, text_pre):
-                    fallback_model = fallback_model_for_unavailable(chosen_model)
+                    fallback_model = fallback_model_for_unavailable(
+                        chosen_model,
+                        task_type=task_type,
+                        attempted_models=attempted_model_keys,
+                    )
                     if fallback_model:
                         logging.warning("Model %s unavailable, retry with fallback %s", chosen_model, fallback_model)
                         chosen_model = fallback_model
+                        _remember_attempted_model(attempted_model_keys, chosen_model)
                         if send_progress is not None:
                             with contextlib.suppress(Exception):
                                 await send_progress(make_progress_payload("🔁 Повторяю запрос другим маршрутом…"))
@@ -4822,7 +4892,13 @@ async def chat_with_openrouter(
                 resp_json = {}
             reply = _extract_reply_from_openrouter(resp_json)
             if is_empty_openrouter_reply(reply):
-                fallback_model = fallback_model_for_runtime_issue(chosen_model, task_type=task_type)
+                mark_model_temporarily_degraded(chosen_model, "empty_reply_payload")
+                _remember_attempted_model(attempted_model_keys, chosen_model)
+                fallback_model = fallback_model_for_runtime_issue(
+                    chosen_model,
+                    task_type=task_type,
+                    attempted_models=attempted_model_keys,
+                )
                 if fallback_model and fallback_model != chosen_model:
                     logging.warning("Model %s returned empty reply payload, retrying with %s", chosen_model, fallback_model)
                     if send_progress is not None:
@@ -4834,13 +4910,17 @@ async def chat_with_openrouter(
                     else:
                         resp = await _request_once(async_client, fallback_model, request_timeout=max(OPENROUTER_MIN_FALLBACK_TIMEOUT, float(timeout)))
                     chosen_model = fallback_model
+                    _remember_attempted_model(attempted_model_keys, chosen_model)
                     response_status_code = int(getattr(resp, "status_code", 0) or 0)
-                    try:
-                        resp_json = resp.json()
-                    except Exception:
-                        logging.exception("Failed to parse fallback OpenRouter JSON response")
-                        resp_json = {}
-                    reply = _extract_reply_from_openrouter(resp_json)
+                    if response_status_code < 400:
+                        try:
+                            resp_json = resp.json()
+                        except Exception:
+                            logging.exception("Failed to parse fallback OpenRouter JSON response")
+                            resp_json = {}
+                        reply = _extract_reply_from_openrouter(resp_json)
+                    else:
+                        logging.error("[OpenRouter] empty-reply fallback returned non-2xx: %s", response_status_code)
 
     except Exception as e:
         logging.exception("[OpenRouter] Ошибка запроса/обработки: %s", e)
@@ -5553,6 +5633,10 @@ async def models_command(update: Update, context: any):
         return
     presets = get_admin_model_presets()
     presets_text = "\n".join(f"• <code>{html.escape(model_id)}</code>" for model_id in presets)
+    router_preview = "\n\n".join(
+        format_model_candidates_preview(task_type)
+        for task_type in ("simple", "complex", "math", "vision")
+    )
     text = (
         "🧠 Модели роутера\n\n"
         f"FAST: <code>{html.escape(MODEL_FAST_TEXT)}</code>\n"
@@ -5560,6 +5644,7 @@ async def models_command(update: Update, context: any):
         f"MATH: <code>{html.escape(MODEL_MATH)}</code>\n"
         f"VISION: <code>{html.escape(MODEL_VISION)}</code>\n\n"
         f"Базовая OPENROUTER_MODEL: <code>{html.escape(OPENROUTER_MODEL)}</code>\n\n"
+        f"Порядок fallback:\n{router_preview}\n\n"
         "Доступные варианты для STRONG:\n"
         f"{presets_text}\n\n"
         "Нажми кнопку ниже, чтобы переключить STRONG/основную модель."
@@ -8284,6 +8369,7 @@ async def openrouter_request(
 
     request_started_at = _openrouter_runtime_request_started()
     response_status_code: int | None = None
+    attempted_model_keys: set[str] = set()
     try:
         if progress_q:
             await progress_q.put(make_progress_payload("🌐 Подключаюсь к модели…"))
@@ -8309,13 +8395,13 @@ async def openrouter_request(
             logging.info("OpenRouter request path: model=%s key=%s timeout=%.1fs", model_id, key_label, request_timeout)
             return response
 
-        async def _request_with_runtime_fallback(client: httpx.AsyncClient, initial_model: str) -> tuple[httpx.Response, str]:
+        async def _request_with_runtime_fallback(client: httpx.AsyncClient, initial_model: str) -> tuple[httpx.Response, str, set[str]]:
             current_model = initial_model
             attempted_models: set[str] = set()
             fallback_started_at = time.perf_counter()
             attempt_index = 0
             while True:
-                attempted_models.add(current_model)
+                _remember_attempted_model(attempted_models, current_model)
                 request_timeout = get_attempt_request_timeout(
                     float(timeout),
                     task_type=task_type,
@@ -8332,7 +8418,7 @@ async def openrouter_request(
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning(
                             "openrouter_request runtime fallback: %s failed with %s after %.1fs, retrying via %s",
                             current_model,
@@ -8355,12 +8441,16 @@ async def openrouter_request(
                 status_pre = getattr(response, "status_code", None)
                 text_pre = getattr(response, "text", "")[:2000]
                 if is_model_not_found_response(status_pre, text_pre) or is_empty_success_openrouter_response(response):
+                    mark_model_temporarily_degraded(
+                        current_model,
+                        f"unusable_response:{status_pre or 'empty'}",
+                    )
                     fallback_model = fallback_model_for_runtime_issue(
                         current_model,
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning("openrouter_request unusable response: %s -> %s", current_model, fallback_model)
                         if progress_q:
                             await progress_q.put(make_progress_payload("🔁 Повторяю запрос другим маршрутом…"))
@@ -8374,40 +8464,50 @@ async def openrouter_request(
                         task_type=task_type,
                         attempted_models=attempted_models,
                     )
-                    if fallback_model and fallback_model not in attempted_models:
+                    if fallback_model and _is_unattempted_model(fallback_model, attempted_models):
                         logging.warning("openrouter_request retryable status=%s: %s -> %s", status_pre, current_model, fallback_model)
                         if progress_q:
                             await progress_q.put(make_progress_payload("🔁 AI перегружен, пробую запасной маршрут…"))
                         current_model = fallback_model
                         attempt_index += 1
                         continue
-                return response, current_model
+                return response, current_model, attempted_models
 
         async with OPENROUTER_SEMAPHORE:
             if progress_q:
                 await progress_q.put(make_progress_payload("🧠 Готовлю содержательный ответ…"))
             if created_client:
                 async with async_client:
-                    resp, chosen_model = await _request_with_runtime_fallback(async_client, chosen_model)
+                    resp, chosen_model, attempted_model_keys = await _request_with_runtime_fallback(async_client, chosen_model)
                     status_pre = getattr(resp, "status_code", None)
                     text_pre = getattr(resp, "text", "")[:2000]
                     if is_model_not_found_response(status_pre, text_pre):
-                        fallback_model = fallback_model_for_unavailable(chosen_model)
+                        fallback_model = fallback_model_for_unavailable(
+                            chosen_model,
+                            task_type=task_type,
+                            attempted_models=attempted_model_keys,
+                        )
                         if fallback_model:
                             logging.warning("openrouter_request model fallback: %s -> %s", chosen_model, fallback_model)
                             chosen_model = fallback_model
+                            _remember_attempted_model(attempted_model_keys, chosen_model)
                             if progress_q:
                                 await progress_q.put(make_progress_payload("🔁 Повторяю запрос другим маршрутом…"))
                             resp = await _request_once(async_client, chosen_model, request_timeout=max(OPENROUTER_MIN_FALLBACK_TIMEOUT, float(timeout)))
             else:
-                resp, chosen_model = await _request_with_runtime_fallback(async_client, chosen_model)
+                resp, chosen_model, attempted_model_keys = await _request_with_runtime_fallback(async_client, chosen_model)
                 status_pre = getattr(resp, "status_code", None)
                 text_pre = getattr(resp, "text", "")[:2000]
                 if is_model_not_found_response(status_pre, text_pre):
-                    fallback_model = fallback_model_for_unavailable(chosen_model)
+                    fallback_model = fallback_model_for_unavailable(
+                        chosen_model,
+                        task_type=task_type,
+                        attempted_models=attempted_model_keys,
+                    )
                     if fallback_model:
                         logging.warning("openrouter_request model fallback: %s -> %s", chosen_model, fallback_model)
                         chosen_model = fallback_model
+                        _remember_attempted_model(attempted_model_keys, chosen_model)
                         if progress_q:
                             await progress_q.put(make_progress_payload("🔁 Повторяю запрос другим маршрутом…"))
                         resp = await _request_once(async_client, chosen_model, request_timeout=max(OPENROUTER_MIN_FALLBACK_TIMEOUT, float(timeout)))
@@ -8437,7 +8537,13 @@ async def openrouter_request(
         except Exception:
             content = None
         if is_empty_openrouter_reply(content):
-            fallback_model = fallback_model_for_runtime_issue(chosen_model, task_type=task_type)
+            mark_model_temporarily_degraded(chosen_model, "empty_reply_payload")
+            _remember_attempted_model(attempted_model_keys, chosen_model)
+            fallback_model = fallback_model_for_runtime_issue(
+                chosen_model,
+                task_type=task_type,
+                attempted_models=attempted_model_keys,
+            )
             if fallback_model and fallback_model != chosen_model:
                 logging.warning("openrouter_request empty reply payload: %s -> %s", chosen_model, fallback_model)
                 if progress_q:
@@ -8448,7 +8554,11 @@ async def openrouter_request(
                 else:
                     resp = await _request_once(async_client, fallback_model, request_timeout=max(OPENROUTER_MIN_FALLBACK_TIMEOUT, float(timeout)))
                 chosen_model = fallback_model
+                _remember_attempted_model(attempted_model_keys, chosen_model)
                 response_status_code = int(getattr(resp, "status_code", 0) or 0)
+                if response_status_code >= 400:
+                    logging.error("openrouter_request empty-reply fallback returned non-2xx: %s", response_status_code)
+                    return OPENROUTER_TEMPORARY_UNAVAILABLE_MESSAGE
                 try:
                     data = resp.json()
                 except Exception:

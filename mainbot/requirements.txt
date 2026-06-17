@@ -1,4 +1,4 @@
-# Shared runtime dependencies for main.py + soo.py
+# Runtime dependencies for main.py
 aiofiles==24.1.0
 aiogram==3.27.0
 aiohttp==3.13.5

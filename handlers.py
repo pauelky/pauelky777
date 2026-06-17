@@ -2311,6 +2311,8 @@ async def run_bot() -> None:
                 task.cancel()
                 try:
                     await task
+                except asyncio.CancelledError:
+                    pass
                 except Exception:
                     pass
         if app is not None:

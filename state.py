@@ -7,11 +7,28 @@ class AuthState:
     WAIT_2FA = "WAIT_2FA"
 
 
+AUTH_STATE_MUTABLE_COLUMNS = {
+    "phone",
+    "tmp_prefix",
+    "phone_code_hash",
+    "expires_at",
+    "awaiting_2fa",
+    "resend_allowed_at",
+    "auth_fail_count",
+    "banned_until",
+}
+
+
 async def set_state(db: Database, user_id: int, state: str, **kwargs) -> None:
     """
     Upsert auth_state row for user_id. Additional kwargs are saved as columns.
     Uses INSERT ... ON CONFLICT DO UPDATE pattern.
     """
+    unknown_columns = set(kwargs) - AUTH_STATE_MUTABLE_COLUMNS
+    if unknown_columns:
+        unknown = ", ".join(sorted(unknown_columns))
+        raise ValueError(f"Unsupported auth_state column(s): {unknown}")
+
     cols = ["user_id", "state", "updated_at"] + list(kwargs.keys())
     vals = [user_id, state, datetime.now(timezone.utc).isoformat()] + list(kwargs.values())
     placeholders = ", ".join(["?"] * len(cols))

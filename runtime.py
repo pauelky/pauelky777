@@ -214,8 +214,8 @@ class WatcherService:
             @client.on(events.NewMessage(incoming=True))
             async def __debug_incoming(ev):
                 try:
-                    logger.info(
-                        "DEBUG incoming(user=%s): chat_id=%s msg_id=%s text_preview=%s",
+                    logger.debug(
+                        "Incoming event user=%s chat_id=%s msg_id=%s text_preview=%s",
                         user_id,
                         getattr(ev, "chat_id", None),
                         getattr(ev, "id", None),

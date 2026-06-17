@@ -28,23 +28,6 @@ RetryAfter = TelegramRetryAfter
 TimedOut = TelegramNetworkError
 
 
-_MOJIBAKE_HINT_RE = re.compile(r"(Р.|С.|вЂ|рџ|Ѓ|Ў)")
-
-
-def _normalize_text(value: Any) -> str:
-    text = str(value or "")
-    if not text:
-        return ""
-    if not _MOJIBAKE_HINT_RE.search(text):
-        return text
-    try:
-        fixed = text.encode("cp1251").decode("utf-8")
-        return fixed or text
-    except Exception:
-        return text
-
-
-# Enhanced mojibake repair: keep this override below legacy implementation.
 _MOJIBAKE_HINT_RE = re.compile(r"(вЂ|Â|Ã|Ð|Ñ)")
 _RU_CYRILLIC_CHARS = set(
     "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
@@ -143,8 +126,12 @@ def _normalize_file(
         return value
     if isinstance(value, (bytes, bytearray)):
         return BufferedInputFile(bytes(value), filename=filename or default_name)
-    if isinstance(value, (str, Path)):
+    if isinstance(value, Path):
         return FSInputFile(str(value))
+    if isinstance(value, str):
+        if Path(value).exists():
+            return FSInputFile(value)
+        return value
     if isinstance(value, io.BytesIO):
         current_pos = value.tell()
         try:

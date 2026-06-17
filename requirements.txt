@@ -4,3 +4,4 @@ aiosqlite>=0.20.0,<1
 python-dotenv>=1.0.0,<2
 qrcode[pil]>=7.4.2,<9
 Pillow>=10.3.0,<12
+tzdata>=2026.1,<2027

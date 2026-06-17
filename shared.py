@@ -108,6 +108,33 @@ def _resolve_log_level(env_name: str, default: int) -> int:
     return getattr(logging, normalized, default)
 
 
+def _parse_int_tuple_env(name: str) -> Tuple[int, ...]:
+    raw_value = str(os.getenv(name, "") or "").strip()
+    if not raw_value:
+        return ()
+
+    values: List[int] = []
+    for part in raw_value.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            values.append(int(item))
+        except ValueError as exc:
+            raise ConfigError(f"{name} contains invalid integer value: {item!r}") from exc
+    return tuple(values)
+
+
+def _parse_optional_int_env(name: str) -> Optional[int]:
+    raw_value = str(os.getenv(name, "") or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer") from exc
+
+
 @dataclass(frozen=True)
 class Config:
     api_id: int
@@ -148,9 +175,9 @@ class Config:
 
     @staticmethod
     def from_env() -> "Config":
-        API_ID_RAW = os.getenv("TG_API_ID", "")
-        API_HASH = os.getenv("TG_API_HASH", "")
-        BOT_TOKEN = os.getenv("SOO_BOT_TOKEN", os.getenv("BOT_TOKEN", ""))
+        API_ID_RAW = str(os.getenv("TG_API_ID", "") or "").strip()
+        API_HASH = str(os.getenv("TG_API_HASH", "") or "").strip()
+        BOT_TOKEN = str(os.getenv("SOO_BOT_TOKEN", os.getenv("BOT_TOKEN", "")) or "").strip()
         if not (API_ID_RAW and API_HASH and BOT_TOKEN):
             raise ConfigError(
                 "Set TG_API_ID, TG_API_HASH and SOO_BOT_TOKEN (or BOT_TOKEN) in environment. "
@@ -159,27 +186,19 @@ class Config:
 
         try:
             API_ID = int(API_ID_RAW)
-        except Exception:
-            raise ConfigError("TG_API_ID must be integer")
+        except ValueError as exc:
+            raise ConfigError("TG_API_ID must be integer") from exc
 
-        ADMIN_IDS_RAW = os.getenv("ADMIN_IDS", "")
-        admin_ids = tuple(int(x.strip()) for x in ADMIN_IDS_RAW.split(",") if x.strip())
+        admin_ids = _parse_int_tuple_env("ADMIN_IDS")
 
-        BASE_DIR = os.getenv("BASE_DIR", os.getcwd())
+        BASE_DIR = str(os.getenv("BASE_DIR", os.getcwd()) or os.getcwd()).strip() or os.getcwd()
         SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
         MEDIA_DIR = os.path.join(BASE_DIR, "media")
         LOGS_DIR = os.path.join(BASE_DIR, "logs")
         DB_PATH = os.path.join(SESSIONS_DIR, "bot_database.sqlite")
 
         bot_username = str(os.getenv("BOT_USERNAME", "") or "").strip().lstrip("@")
-
-        alert_chat_id_raw = str(os.getenv("ALERT_CHAT_ID", "") or "").strip()
-        alert_chat_id: Optional[int] = None
-        if alert_chat_id_raw:
-            try:
-                alert_chat_id = int(alert_chat_id_raw)
-            except Exception:
-                alert_chat_id = None
+        alert_chat_id = _parse_optional_int_env("ALERT_CHAT_ID")
 
         return Config(
             api_id=API_ID,
@@ -191,7 +210,7 @@ class Config:
             media_dir=MEDIA_DIR,
             logs_dir=LOGS_DIR,
             db_path=DB_PATH,
-            tz_name=os.getenv("TIMEZONE", "Europe/Moscow"),
+            tz_name=str(os.getenv("TIMEZONE", "Europe/Moscow") or "Europe/Moscow").strip() or "Europe/Moscow",
             alert_chat_id=alert_chat_id,
             bot_username=bot_username,
         )
@@ -758,11 +777,7 @@ async def send_and_log(
 # Core event handler
 # ----------------------------
 # NOTE: EventHandler class (below) is the primary event processor.
-# The old generic handle_event() function has been removed (méz deadcode).
-
-import aiosqlite
-from typing import Optional, Tuple, Dict
-from datetime import datetime, timezone
+# The old generic handle_event() function has been removed.
 
 
 class AsyncSQLitePool:
@@ -874,7 +889,8 @@ class Database:
         # Shutdown dedicated sqlite executor gracefully
         if self._sqlite_executor is not None:
             try:
-                self._sqlite_executor.shutdown(wait=True, timeout=5.0)
+                self._sqlite_executor.shutdown(wait=True)
+                self._sqlite_executor = None
             except Exception:
                 logger.debug("Failed to shutdown sqlite executor", exc_info=True)
 

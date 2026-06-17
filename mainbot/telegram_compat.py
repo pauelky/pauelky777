@@ -75,6 +75,30 @@ def convert_reply_markup(markup: Any) -> Any:
     return markup
 
 
+def _read_file_like(value: Any) -> bytes:
+    position = None
+    if hasattr(value, "tell"):
+        try:
+            position = value.tell()
+        except Exception:
+            position = None
+
+    try:
+        if hasattr(value, "seek"):
+            value.seek(0)
+        data = value.read()
+    finally:
+        if position is not None and hasattr(value, "seek"):
+            try:
+                value.seek(position)
+            except Exception:
+                pass
+
+    if isinstance(data, str):
+        return data.encode("utf-8")
+    return data
+
+
 def _prepare_file(value: Any, default_name: str) -> Any:
     if value is None:
         return None
@@ -82,18 +106,7 @@ def _prepare_file(value: Any, default_name: str) -> Any:
         return BufferedInputFile(bytes(value), filename=default_name)
     if hasattr(value, "read"):
         filename = os.path.basename(getattr(value, "name", "") or default_name)
-        position = None
-        if hasattr(value, "tell"):
-            try:
-                position = value.tell()
-            except Exception:
-                position = None
-        data = value.read()
-        if position is not None and hasattr(value, "seek"):
-            try:
-                value.seek(position)
-            except Exception:
-                pass
+        data = _read_file_like(value)
         return BufferedInputFile(data, filename=filename)
     if isinstance(value, os.PathLike):
         return FSInputFile(os.fspath(value))

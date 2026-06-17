@@ -1,4 +1,6 @@
-# Python
+.git
+.gitignore
+.dockerignore
 __pycache__/
 *.py[cod]
 *.pyo
@@ -8,13 +10,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
-# Virtual environments
 .venv/
 venv/
 env/
-
-# Runtime data
+.env
+.env.local
 data/
 logs/
 media/
@@ -24,13 +24,3 @@ sessions/
 *.db
 *.log
 *.lock
-
-# OS / IDE
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-# Secrets
-.env
-.env.local

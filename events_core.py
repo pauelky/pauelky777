@@ -6,9 +6,15 @@ from PIL import Image, ImageOps, ImageDraw, ImageFont, ImageStat
 
 def _short_text(value: Any, max_len: int) -> str:
     text = repair_mojibake(value or "").replace("\x00", "").strip()
+    if max_len <= 0:
+        return ""
     if len(text) <= max_len:
         return text
     return text[: max_len - 1].rstrip() + "..."
+
+
+def _is_valid_telegram_username(username: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_]{5,32}", username or ""))
 
 
 def _is_minor_edit(original_text: Optional[str], new_text: Optional[str]) -> bool:
@@ -22,7 +28,7 @@ def _is_minor_edit(original_text: Optional[str], new_text: Optional[str]) -> boo
 
 def _html_user_link(username: str, sender_id: Optional[int] = None) -> str:
     username = repair_mojibake(username or "").strip().lstrip("@")
-    if re.fullmatch(r"[A-Za-z0-9_]{3,}", username or ""):
+    if _is_valid_telegram_username(username):
         username_h = html.escape(username)
         return f'<a href="https://t.me/{username_h}">@{username_h}</a>'
     if sender_id:
@@ -37,7 +43,7 @@ def _html_user_link(username: str, sender_id: Optional[int] = None) -> str:
 
 def _html_chat_link(title: str, username: str = "") -> str:
     username = repair_mojibake(username or "").strip().lstrip("@")
-    if re.fullmatch(r"[A-Za-z0-9_]{3,}", username or ""):
+    if _is_valid_telegram_username(username):
         username_h = html.escape(username)
         return f'<a href="https://t.me/{username_h}">@{username_h}</a>'
     return html.escape(repair_mojibake(title or "—"))
