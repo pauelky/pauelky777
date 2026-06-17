@@ -723,16 +723,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_context = "welcome" if is_new else "auth"
             logger.debug("Failed to track %s message uid=%s", log_context, uid)
 
-    first_name = html_escape(user.first_name or "друг")
-    await send_and_log(
-        context.bot,
-        uid,
-        _build_command_center_text(first_name, session_valid=session_valid),
-        username=uname,
-        reply_markup=_build_main_menu_keyboard(session_valid=session_valid),
-        parse_mode=ParseMode.HTML,
-    )
-
 async def cleansessions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or user.id not in CONFIG.admin_ids:
